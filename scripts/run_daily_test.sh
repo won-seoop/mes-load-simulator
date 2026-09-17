@@ -11,6 +11,9 @@ python -m venv .venv 2>/dev/null || true
 source .venv/bin/activate
 pip install -q -r requirements.txt
 
+echo "Running test suite before load test..."
+pytest tests/ -v
+
 uvicorn app.main:app --host 0.0.0.0 --port 8000 > "$RAW_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true' EXIT

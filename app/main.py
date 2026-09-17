@@ -98,8 +98,10 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     if not lot:
         raise HTTPException(404, "lot not found")
-    if lot.status in (LotStatus.DONE, LotStatus.HOLD):
+    if lot.status == LotStatus.DONE:
         raise HTTPException(400, f"lot is {lot.status}, cannot advance")
+    # A HOLD lot is retried at its current step once equipment frees up,
+    # rather than being stuck forever (equipment down is a transient state).
 
     step = PROCESS_ROUTE[lot.step_index]
     eq = (
@@ -169,7 +171,7 @@ def metrics(db: Session = Depends(get_db)):
         completed_today=completed_today,
         scrap_count=scrap_count,
         yield_rate=round(yield_rate, 4),
-        avg_cycle_time_seconds=round(avg_cycle, 1) if avg_cycle else None,
+        avg_cycle_time_seconds=round(avg_cycle, 1) if avg_cycle is not None else None,
         equipment_utilization=equipment_utilization,
         throughput_per_hour=throughput,
     )

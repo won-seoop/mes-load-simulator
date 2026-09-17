@@ -1,5 +1,6 @@
 .venv/
 __pycache__/
 *.pyc
-mes.db
+*.db
+.pytest_cache/
 reports/raw/
