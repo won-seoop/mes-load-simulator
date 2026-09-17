@@ -22,11 +22,21 @@ for i in $(seq 1 20); do
   sleep 0.5
 done
 
+set +e
 locust -f load_test/locustfile.py --headless \
   -u 50 -r 5 -t 3m \
   --host http://localhost:8000 \
   --csv "$RAW_DIR/locust" \
   --only-summary
+LOCUST_EXIT=$?
+set -e
+# Locust exits non-zero whenever any request failed during the run, which is
+# expected under load (a small failure rate is normal) — only treat exit
+# codes other than 0/1 as a real crash worth aborting the pipeline for.
+if [ "$LOCUST_EXIT" -gt 1 ]; then
+  echo "locust exited with unexpected code $LOCUST_EXIT" >&2
+  exit "$LOCUST_EXIT"
+fi
 
 curl -s http://localhost:8000/metrics -o "$RAW_DIR/mes_metrics.json"
 

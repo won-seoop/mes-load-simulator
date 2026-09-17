@@ -18,7 +18,11 @@ class MesUser(HttpUser):
 
     @task(6)
     def advance_lot(self):
-        resp = self.client.get("/lots?status=WAITING", name="/lots [list waiting]")
+        # A lot needs repeated /advance calls to walk the full process route
+        # (ETCH -> CVD -> CMP -> INSPECT), so both WAITING and already
+        # in-flight PROCESSING lots are eligible, not just WAITING ones.
+        status = random.choice(["WAITING", "PROCESSING"])
+        resp = self.client.get(f"/lots?status={status}", name="/lots [list waiting/processing]")
         if resp.status_code != 200:
             return
         lots = resp.json()
