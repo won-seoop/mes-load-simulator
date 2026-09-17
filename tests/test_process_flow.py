@@ -53,6 +53,23 @@ def test_advance_lot_holds_when_no_equipment_available(client):
     assert lot["step_index"] == 0  # never advanced
 
 
+def test_advance_lot_load_balances_across_equipment_of_same_step(client):
+    """Regression test for the dispatch bug where advance_lot always picked
+    the same equipment (deterministic query order) leaving the other two
+    tools per step idle at 0% utilization. Now it should spread lots across
+    all three tools of a step by picking whichever has the least run time."""
+    first_step = PROCESS_ROUTE[0]
+
+    lots = [_create_lot(client, product=f"WAFER-{i}") for i in range(3)]
+    for lot in lots:
+        client.post(f"/lots/{lot['id']}/advance")
+
+    equipment = client.get("/equipment").json()
+    step_equipment = [eq for eq in equipment if eq["process_step"] == first_step]
+    assert len(step_equipment) == 3
+    assert sum(1 for eq in step_equipment if eq["status"] == "RUN") == 3
+
+
 def test_advance_lot_resumes_once_equipment_is_freed(client):
     lot = _create_lot(client)
     equipment = client.get("/equipment").json()

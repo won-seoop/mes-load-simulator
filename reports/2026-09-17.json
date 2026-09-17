@@ -1,34 +1,34 @@
 {
   "date": "2026-09-17",
   "load_test": {
-    "requests": 18030,
+    "requests": 17990,
     "failures": 0,
     "failure_rate": 0.0,
-    "rps": 100.62996012390533,
-    "p95_ms": 13.0,
-    "p99_ms": 27.0,
-    "avg_ms": 5.709605671270301
+    "rps": 100.39973592213767,
+    "p95_ms": 21.0,
+    "p99_ms": 43.0,
+    "avg_ms": 8.551443482767946
   },
   "mes_metrics": {
-    "wip_count": 2544,
-    "completed_today": 280,
-    "scrap_count": 181,
-    "yield_rate": 0.9359,
-    "avg_cycle_time_seconds": 10.0,
+    "wip_count": 2490,
+    "completed_today": 322,
+    "scrap_count": 163,
+    "yield_rate": 0.942,
+    "avg_cycle_time_seconds": 10.1,
     "equipment_utilization": {
-      "ETCH-01": 179.6,
-      "ETCH-02": 0.0,
-      "ETCH-03": 0.0,
-      "CVD-01": 179.0,
-      "CVD-02": 0.0,
-      "CVD-03": 0.0,
-      "CMP-01": 178.4,
-      "CMP-02": 0.0,
-      "CMP-03": 0.0,
-      "INSPECT-01": 178.0,
-      "INSPECT-02": 0.0,
-      "INSPECT-03": 0.0
+      "ETCH-01": 179.5,
+      "ETCH-02": 179.1,
+      "ETCH-03": 178.6,
+      "CVD-01": 179.2,
+      "CVD-02": 178.4,
+      "CVD-03": 178.3,
+      "CMP-01": 179.1,
+      "CMP-02": 178.0,
+      "CMP-03": 177.9,
+      "INSPECT-01": 179.1,
+      "INSPECT-02": 177.1,
+      "INSPECT-03": 176.7
     },
-    "throughput_per_hour": 280.0
+    "throughput_per_hour": 322.0
   }
 }

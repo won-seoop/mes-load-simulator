@@ -22,6 +22,15 @@ app = FastAPI(title="MES Simulator", version="0.1.0")
 SCRAP_PROBABILITY = 0.03
 
 
+def _effective_run_seconds(eq: Equipment, now: datetime) -> float:
+    """run_seconds plus any time accrued in the current RUN stretch that
+    hasn't been flushed into run_seconds yet (that only happens on the next
+    status change)."""
+    if eq.status == EquipmentStatus.RUN:
+        return eq.run_seconds + (now - eq.last_status_change).total_seconds()
+    return eq.run_seconds
+
+
 @app.on_event("startup")
 def seed_equipment():
     db = SessionLocal()
@@ -104,18 +113,21 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
     # rather than being stuck forever (equipment down is a transient state).
 
     step = PROCESS_ROUTE[lot.step_index]
-    eq = (
+    now = datetime.utcnow()
+    candidates = (
         db.query(Equipment)
         .filter(Equipment.process_step == step, Equipment.status != EquipmentStatus.DOWN)
-        .first()
+        .all()
     )
+    # Dispatch to the least-utilized available tool of this step (instead of
+    # always the same one) so parallel equipment capacity is actually used.
+    eq = min(candidates, key=lambda e: _effective_run_seconds(e, now), default=None)
     if not eq:
         lot.status = LotStatus.HOLD
         db.commit()
         db.refresh(lot)
         return lot
 
-    now = datetime.utcnow()
     if eq.status == EquipmentStatus.RUN:
         eq.run_seconds += (now - eq.last_status_change).total_seconds()
     eq.status = EquipmentStatus.RUN
@@ -156,12 +168,10 @@ def metrics(db: Session = Depends(get_db)):
         .scalar()
     )
 
-    equipment_utilization = {}
-    for eq in db.query(Equipment).all():
-        run_seconds = eq.run_seconds
-        if eq.status == EquipmentStatus.RUN:
-            run_seconds += (datetime.utcnow() - eq.last_status_change).total_seconds()
-        equipment_utilization[eq.name] = round(run_seconds, 1)
+    now = datetime.utcnow()
+    equipment_utilization = {
+        eq.name: round(_effective_run_seconds(eq, now), 1) for eq in db.query(Equipment).all()
+    }
 
     window_start = datetime.utcnow() - timedelta(hours=1)
     throughput = completed_today_q.filter(Lot.completed_at >= window_start).count()
