@@ -1,8 +1,21 @@
+from datetime import datetime
+
 from app.models import PROCESS_ROUTE
 
 
 def _create_lot(client, product="WAFER-A"):
     return client.post("/lots", json={"product": product}).json()
+
+
+def _freeze_time(monkeypatch, when):
+    """Make app.main's datetime.utcnow() return a fixed instant."""
+
+    class _Frozen(datetime):
+        @classmethod
+        def utcnow(cls):
+            return when
+
+    monkeypatch.setattr("app.main.datetime", _Frozen)
 
 
 def test_advance_lot_walks_full_route_to_done(client):
@@ -123,3 +136,26 @@ def test_completed_lot_counts_toward_metrics(client):
     assert metrics["completed_today"] >= 1
     assert metrics["avg_cycle_time_seconds"] is not None
     assert metrics["avg_cycle_time_seconds"] >= 0
+
+
+def test_completed_today_resets_at_kst_midnight_not_utc_midnight(client, monkeypatch):
+    """Regression test: completed_today used to reset at UTC midnight
+    (KST 09:00), so a lot finished at 23:00 KST yesterday was still counted
+    as "today" for another 9 hours. It must reset at KST midnight instead."""
+    yesterday_kst_23h = datetime(2026, 9, 17, 14, 0, 0)  # 2026-09-17 23:00 KST
+    today_kst_00h30 = datetime(2026, 9, 17, 15, 30, 0)  # 2026-09-18 00:30 KST
+
+    _freeze_time(monkeypatch, yesterday_kst_23h)
+    old_lot = _create_lot(client, product="OLD-KST-DAY")
+    for _ in range(len(PROCESS_ROUTE)):
+        old_lot = client.post(f"/lots/{old_lot['id']}/advance").json()
+    assert old_lot["status"] == "DONE"
+
+    _freeze_time(monkeypatch, today_kst_00h30)
+    new_lot = _create_lot(client, product="NEW-KST-DAY")
+    for _ in range(len(PROCESS_ROUTE)):
+        new_lot = client.post(f"/lots/{new_lot['id']}/advance").json()
+    assert new_lot["status"] == "DONE"
+
+    metrics = client.get("/metrics").json()
+    assert metrics["completed_today"] == 1

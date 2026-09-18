@@ -2,7 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-RUN_DATE=$(date -u +%Y-%m-%d)
+# The scheduler runs at 07:00 KST; using UTC here would mislabel every run
+# between KST 00:00-08:59 with the previous KST day (see ROADMAP.md).
+RUN_DATE=$(TZ=Asia/Seoul date +%Y-%m-%d)
 RAW_DIR="reports/raw/${RUN_DATE}"
 mkdir -p "$RAW_DIR"
 

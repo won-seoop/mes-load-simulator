@@ -14,6 +14,7 @@ from app.schemas import (
     LotOut,
     MetricsOut,
 )
+from app.timeutils import kst_midnight_utc
 
 Base.metadata.create_all(bind=engine)
 
@@ -153,7 +154,7 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
 def metrics(db: Session = Depends(get_db)):
     wip_count = db.query(Lot).filter(Lot.status.in_([LotStatus.WAITING, LotStatus.PROCESSING])).count()
 
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = kst_midnight_utc(datetime.utcnow())
     completed_today_q = db.query(Lot).filter(
         Lot.status == LotStatus.DONE, Lot.completed_at >= today_start
     )

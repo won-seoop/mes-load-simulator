@@ -29,6 +29,22 @@
       178~180s, 2대는 0.0), 실제 3대 병렬 처리 용량이 살아나면서 오늘 완료 로트 수도
       280 -> 322건으로 늘었다. 회귀 테스트
       (`test_advance_lot_load_balances_across_equipment_of_same_step`) 추가.
+- [x] (2026-09-19) 리포트 날짜/`completed_today` 집계 기준을 UTC에서 KST로 통일. 스케줄러는
+      매일 오전 7시 **KST**에 도는데 `scripts/run_daily_test.sh`는 `date -u`로, `/metrics`의
+      `completed_today`는 `datetime.utcnow()` 자정 기준으로 "오늘"을 계산하고 있어서, KST
+      00:00~08:59 사이에 도는 실행은 리포트 날짜와 당일 완료 집계가 실제 KST 날짜보다 하루
+      전으로 찍히는 버그가 있었다(전날 리포트에 이미 기록된 문제). 실제로 이번 실행 시각이
+      UTC 2026-09-18 22:12 = KST **2026-09-19 07:12**여서 고치기 전이었다면 이 실행 결과가
+      `reports/2026-09-18.md`(혹은 더 나쁘게 이미 있던 파일)를 잘못된 날짜로 덮어썼을
+      상황이었는데, 수정 후 정확히 `reports/2026-09-19.md`로 생성됨을 확인했다. 새 모듈
+      `app/timeutils.kst_midnight_utc(now_utc)`(naive-UTC 입력을 받아 그 시각이 속한 KST
+      달력일의 자정을 naive-UTC로 반환하는 순수 함수)를 추가해 `/metrics`의 `today_start`
+      계산에 사용하고, `scripts/run_daily_test.sh`의 `RUN_DATE`는 `TZ=Asia/Seoul date`로
+      변경했다. `tests/test_timeutils.py`(경계값 3건)와 `tests/test_process_flow.py`의
+      `test_completed_today_resets_at_kst_midnight_not_utc_midnight`(KST 자정을 사이에 두고
+      완료된 두 로트로 `completed_today`가 KST 기준으로만 리셋됨을 검증, `datetime.utcnow`를
+      monkeypatch로 고정하는 방식 사용)를 추가했다. 50명/3분 부하테스트로 파이프라인 전체가
+      정상 동작함을 재확인(실패율 0%, RPS 99.36, 완료 318건).
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
@@ -43,14 +59,10 @@
 - [ ] Dockerfile 작성 (배포/실행 편의성)
 - [ ] README에 아키텍처 다이어그램 추가
 - [ ] 구조화된 로깅 (structlog 등) 및 요청 추적 ID
-- [ ] `scripts/run_daily_test.sh`가 `date -u`(UTC)로 리포트 날짜를 정하는데, 스케줄은
-      매일 오전 7시 KST에 도는 것을 전제로 하고 있어서 KST 00:00~08:59 사이에 도는 실행은
-      리포트 날짜가 실제 KST 날짜보다 하루 전으로 찍힘(오늘도 이 때문에 KST 9/18 실행 결과가
-      `reports/2026-09-17.md`를 덮어씀). `/metrics`의 `completed_today` 집계도 같은 이유로
-      KST 자정이 아니라 UTC 자정(=KST 오전 9시)에 리셋됨. 리포트 날짜와 "오늘" 집계 기준을
-      KST 기준으로 통일할 것
 - [ ] 설비 다운/HOLD가 반복될 때 HOLD 상태로 머무는 시간(대기시간)을 지표로 노출 —
       현재는 HOLD로 빠진 로트가 언제부터 대기 중인지 알 수 없어 실제 병목 파악이 어려움
+- [ ] `reports/raw/<date>/`의 locust CSV/서버 로그가 무기한 누적되므로 보관 기간 정책
+      (예: N일 지난 raw 데이터는 압축하거나 삭제) 추가
 
 ## 에이전트 작업 원칙
 
