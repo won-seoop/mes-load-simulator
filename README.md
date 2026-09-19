@@ -1,5 +1,7 @@
 # MES Load & Metrics Simulator
 
+[![CI](https://github.com/won-seoop/mes-load-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/won-seoop/mes-load-simulator/actions/workflows/ci.yml)
+
 Samsung SDS Nexplant MES가 다루는 도메인 개념(설비 가동률, 로트/WIP 추적, 공정 경로, 수율, 처리량)을
 참고해서 만든 오픈소스 기반 미니 MES 시뮬레이터입니다. FastAPI로 MES API를 구현하고, Locust로
 매일 부하테스트를 돌려 성능 지표(RPS, p95/p99 latency, 실패율)와 MES 비즈니스 지표(WIP, 수율,
