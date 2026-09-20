@@ -1,0 +1,18 @@
+runtime:
+  framework: fastapi
+  instances: 1
+database:
+  engine: sqlite
+load_test:
+  tool: locust
+  users: 50
+  spawn_rate_per_second: 5
+  duration: 3m
+  workload_change: work_order_create_release_and_lot_split_added
+work_order:
+  product_validation: true
+  quantity_reservation: conditional_update
+  duplicate_order_number: unique_constraint
+lot_state_machine:
+  explicit_transition_matrix: true
+

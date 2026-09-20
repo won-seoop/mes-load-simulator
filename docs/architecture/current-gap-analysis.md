@@ -17,9 +17,9 @@
 
 | MES 영역 | 현재 수준 | 핵심 Gap | 우선순위 |
 |---|---|---|---|
-| Master Data | Product 문자열과 고정 Route | Product/Process/Route/Recipe Version 관리 없음 | 높음 |
-| Work Order | 없음 | 계획수량, 납기, 우선순위, Lot 분할 없음 | 높음 |
-| Lot State | 기본 상태만 존재 | 명시적 허용 전이, Rework/Scrap/Cancel 없음 | 높음 |
+| Master Data | Product, Route 이름/Version, 활성 여부 | Process/Recipe 상세와 Version 변경 정책 없음 | 높음 |
+| Work Order | 계획수량, 납기, 우선순위, Lot 분할 | Cancel, Split/Merge 이력, 납기 성과 없음 | 높음 |
+| Lot State | 허용/금지 전이 Matrix | Rework/Scrap/Cancel 상태 없음 | 높음 |
 | Traceability | Lot Event Journal 구현 | 조회 API와 기본 이력은 있으나 Query/계통도/보존정책 없음 | 높음 |
 | Dispatching | 최소가동시간 규칙 1개 | FIFO/납기/우선순위 비교와 Queue Wait 측정 없음 | 높음 |
 | Equipment | 상태와 누적시간 | Alarm, Downtime Reason, Heartbeat, Interlock 없음 | 높음 |
@@ -46,6 +46,6 @@
 → Outbox와 Replay의 Source Event 부재
 ```
 
-첫 개선으로 `LotEvent` Journal을 동일 Transaction에 저장했다. 50 VU 부하에서 발견한 동시 전이
-충돌은 `status + step_index` 조건부 UPDATE로 해결했다. 다음 Core Gap은 Work Order와 명시적 Lot
-State Machine이다.
+첫 개선으로 `LotEvent` Journal을 동일 Transaction에 저장했다. 동시 전이 충돌은 `status +
+step_index` 조건부 UPDATE로 해결했다. Work Order와 Lot State Machine까지 추가했으며, 다음 Core
+Gap은 Quality/Defect/Rework와 Equipment Alarm이다.

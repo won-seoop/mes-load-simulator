@@ -1,0 +1,18 @@
+{
+  "source": "reports/2026-09-20-exp003.json",
+  "workload": "Locust 50 VU, spawn 5/s, 3 minutes, Work Order flow included",
+  "requests": 18976,
+  "failures": 0,
+  "rps": 105.67583830940099,
+  "avg_ms": 12.100387593272592,
+  "p95_ms": 34.0,
+  "p99_ms": 77.0,
+  "expected_lot_state_conflicts_409": 8,
+  "server_5xx": 0,
+  "integrity_errors": 0,
+  "work_order_create_requests": 878,
+  "work_order_release_requests": 878,
+  "work_order_lot_create_requests": 878,
+  "tests_passed": 48
+}
+

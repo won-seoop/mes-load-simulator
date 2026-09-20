@@ -16,6 +16,7 @@ Samsung SDS Nexplant MES가 다루는 도메인 개념(설비 가동률, 로트/
 ## Domain Model
 
 - **Equipment**: 공정 스텝(ETCH → CVD → CMP → INSPECT)별 설비, 상태(RUN/IDLE/DOWN), 가동 시간 누적
+- **Product / WorkOrder**: 활성 제품, 계획수량/납기/우선순위, Release와 Lot 분할 수량
 - **Lot**: 제품/수량, 현재 공정 스텝, 상태(WAITING/PROCESSING/DONE/HOLD), scrap 여부
 - **LotEvent**: 생성/HOLD/복구/공정완료/최종완료의 순서가 보장된 Lot 이력
 
@@ -23,6 +24,9 @@ Samsung SDS Nexplant MES가 다루는 도메인 개념(설비 가동률, 로트/
 
 - `GET /health`
 - `GET /equipment`, `PATCH /equipment/{id}/status`
+- `GET/POST /products`
+- `POST/GET /work-orders`, `GET /work-orders/{id}`
+- `POST /work-orders/{id}/release`, `POST/GET /work-orders/{id}/lots`
 - `POST /lots`, `GET /lots`, `GET /lots/{id}`, `POST /lots/{id}/advance`
 - `GET /lots/{id}/events` — 공정, 설비, 상태 전이 Traceability
 - `GET /metrics` — WIP, 완료 수, 수율, 평균 사이클타임, 설비 가동률, 시간당 처리량

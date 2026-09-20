@@ -1,0 +1,37 @@
+{
+  "date": "2026-09-20-exp003",
+  "load_test": {
+    "requests": 18976,
+    "failures": 0,
+    "failure_rate": 0.0,
+    "rps": 105.67583830940099,
+    "p95_ms": 34.0,
+    "p99_ms": 77.0,
+    "avg_ms": 12.100387593272592,
+    "business_conflicts": 8,
+    "server_5xx": 0,
+    "integrity_errors": 0
+  },
+  "mes_metrics": {
+    "wip_count": 3195,
+    "completed_today": 301,
+    "scrap_count": 153,
+    "yield_rate": 0.9562,
+    "avg_cycle_time_seconds": 14.5,
+    "equipment_utilization": {
+      "ETCH-01": 179.4,
+      "ETCH-02": 178.9,
+      "ETCH-03": 178.3,
+      "CVD-01": 179.1,
+      "CVD-02": 178.8,
+      "CVD-03": 178.2,
+      "CMP-01": 178.8,
+      "CMP-02": 178.5,
+      "CMP-03": 177.8,
+      "INSPECT-01": 178.5,
+      "INSPECT-02": 178.4,
+      "INSPECT-03": 177.2
+    },
+    "throughput_per_hour": 301.0
+  }
+}

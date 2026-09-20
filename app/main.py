@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy import func, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import Base, SessionLocal, engine, get_db
@@ -14,6 +15,10 @@ from app.models import (
     LotEvent,
     LotEventType,
     LotStatus,
+    Product,
+    WorkOrder,
+    WorkOrderLot,
+    WorkOrderStatus,
 )
 from app.schemas import (
     EquipmentOut,
@@ -22,7 +27,13 @@ from app.schemas import (
     LotEventOut,
     LotOut,
     MetricsOut,
+    ProductCreate,
+    ProductOut,
+    WorkOrderCreate,
+    WorkOrderLotCreate,
+    WorkOrderOut,
 )
+from app.state_machine import ensure_lot_transition
 from app.timeutils import kst_midnight_utc
 
 Base.metadata.create_all(bind=engine)
@@ -30,6 +41,12 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="MES Simulator", version="0.1.0")
 
 SCRAP_PROBABILITY = 0.03
+DEFAULT_PRODUCTS = (
+    ("WAFER-A", "Wafer A"),
+    ("WAFER-B", "Wafer B"),
+    ("PANEL-X", "Panel X"),
+    ("PANEL-Y", "Panel Y"),
+)
 
 
 def _append_lot_event(
@@ -129,7 +146,10 @@ def seed_equipment():
                             status=EquipmentStatus.IDLE,
                         )
                     )
-            db.commit()
+        for code, name in DEFAULT_PRODUCTS:
+            if not db.get(Product, code):
+                db.add(Product(code=code, name=name))
+        db.commit()
     finally:
         db.close()
 
@@ -137,6 +157,147 @@ def seed_equipment():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/products", response_model=list[ProductOut])
+def list_products(db: Session = Depends(get_db)):
+    return db.query(Product).order_by(Product.code).all()
+
+
+@app.post("/products", response_model=ProductOut)
+def create_product(body: ProductCreate, db: Session = Depends(get_db)):
+    product = Product(**body.model_dump())
+    db.add(product)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, f"product {body.code} already exists")
+    db.refresh(product)
+    return product
+
+
+@app.post("/work-orders", response_model=WorkOrderOut)
+def create_work_order(body: WorkOrderCreate, db: Session = Depends(get_db)):
+    product = db.get(Product, body.product_code)
+    if not product:
+        raise HTTPException(422, f"product {body.product_code} does not exist")
+    if not product.is_active:
+        raise HTTPException(409, f"product {body.product_code} is inactive")
+    work_order = WorkOrder(**body.model_dump(), status=WorkOrderStatus.CREATED)
+    db.add(work_order)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, f"work order {body.order_no} already exists")
+    db.refresh(work_order)
+    return work_order
+
+
+@app.get("/work-orders", response_model=list[WorkOrderOut])
+def list_work_orders(db: Session = Depends(get_db)):
+    return db.query(WorkOrder).order_by(WorkOrder.id.desc()).limit(200).all()
+
+
+@app.get("/work-orders/{work_order_id}", response_model=WorkOrderOut)
+def get_work_order(work_order_id: int, db: Session = Depends(get_db)):
+    work_order = db.get(WorkOrder, work_order_id)
+    if not work_order:
+        raise HTTPException(404, "work order not found")
+    return work_order
+
+
+@app.post("/work-orders/{work_order_id}/release", response_model=WorkOrderOut)
+def release_work_order(work_order_id: int, db: Session = Depends(get_db)):
+    now = datetime.utcnow()
+    result = db.execute(
+        update(WorkOrder)
+        .where(
+            WorkOrder.id == work_order_id,
+            WorkOrder.status == WorkOrderStatus.CREATED,
+        )
+        .values(status=WorkOrderStatus.RELEASED, updated_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        work_order = db.get(WorkOrder, work_order_id)
+        if not work_order:
+            raise HTTPException(404, "work order not found")
+        raise HTTPException(409, f"work order is {work_order.status}, cannot release")
+    db.commit()
+    return db.get(WorkOrder, work_order_id)
+
+
+@app.post("/work-orders/{work_order_id}/lots", response_model=LotOut)
+def create_work_order_lot(
+    work_order_id: int,
+    body: WorkOrderLotCreate,
+    db: Session = Depends(get_db),
+):
+    work_order = db.get(WorkOrder, work_order_id)
+    if not work_order:
+        raise HTTPException(404, "work order not found")
+    now = datetime.utcnow()
+    result = db.execute(
+        update(WorkOrder)
+        .where(
+            WorkOrder.id == work_order_id,
+            WorkOrder.status.in_(
+                [WorkOrderStatus.RELEASED, WorkOrderStatus.IN_PROGRESS]
+            ),
+            WorkOrder.released_quantity + body.quantity
+            <= WorkOrder.planned_quantity,
+        )
+        .values(
+            released_quantity=WorkOrder.released_quantity + body.quantity,
+            status=WorkOrderStatus.IN_PROGRESS,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        current = db.get(WorkOrder, work_order_id)
+        if current.status not in (
+            WorkOrderStatus.RELEASED,
+            WorkOrderStatus.IN_PROGRESS,
+        ):
+            raise HTTPException(409, f"work order is {current.status}, cannot create lot")
+        raise HTTPException(409, "lot quantity exceeds remaining planned quantity")
+
+    lot = Lot(
+        product=work_order.product_code,
+        quantity=body.quantity,
+        status=LotStatus.WAITING,
+    )
+    db.add(lot)
+    db.flush()
+    db.add(WorkOrderLot(work_order_id=work_order_id, lot_id=lot.id))
+    _append_lot_event(
+        db,
+        lot,
+        LotEventType.LOT_CREATED,
+        to_status=LotStatus.WAITING,
+        occurred_at=now,
+    )
+    db.commit()
+    db.refresh(lot)
+    return lot
+
+
+@app.get("/work-orders/{work_order_id}/lots", response_model=list[LotOut])
+def list_work_order_lots(work_order_id: int, db: Session = Depends(get_db)):
+    if not db.get(WorkOrder, work_order_id):
+        raise HTTPException(404, "work order not found")
+    return (
+        db.query(Lot)
+        .join(WorkOrderLot, WorkOrderLot.lot_id == Lot.id)
+        .filter(WorkOrderLot.work_order_id == work_order_id)
+        .order_by(Lot.id)
+        .all()
+    )
 
 
 @app.get("/equipment", response_model=list[EquipmentOut])
@@ -229,6 +390,7 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
     eq = min(candidates, key=lambda e: _effective_run_seconds(e, now), default=None)
     if not eq:
         if previous_status != LotStatus.HOLD:
+            ensure_lot_transition(previous_status, LotStatus.HOLD)
             transitioned = _compare_and_set_lot(
                 db,
                 lot,
@@ -264,6 +426,7 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
         else LotStatus.PROCESSING
     )
     next_is_scrap = 1 if lot.is_scrap or random.random() < SCRAP_PROBABILITY else 0
+    ensure_lot_transition(previous_status, next_status)
     transition_values = {
         "step_index": next_step_index,
         "status": next_status,
@@ -319,6 +482,24 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
             equipment_id=eq.id,
             occurred_at=now,
         )
+        association = (
+            db.query(WorkOrderLot).filter(WorkOrderLot.lot_id == lot.id).one_or_none()
+        )
+        if association:
+            db.execute(
+                update(WorkOrder)
+                .where(WorkOrder.id == association.work_order_id)
+                .values(
+                    completed_quantity=WorkOrder.completed_quantity + lot.quantity,
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            db.flush()
+            work_order = db.get(WorkOrder, association.work_order_id)
+            db.refresh(work_order)
+            if work_order.completed_quantity >= work_order.planned_quantity:
+                work_order.status = WorkOrderStatus.COMPLETED
 
     db.commit()
     db.refresh(lot)

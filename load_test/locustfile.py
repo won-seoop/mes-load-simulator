@@ -1,4 +1,5 @@
 import random
+from uuid import uuid4
 
 from locust import HttpUser, between, task
 
@@ -14,6 +15,35 @@ class MesUser(HttpUser):
             "/lots",
             json={"product": random.choice(PRODUCTS), "quantity": random.randint(10, 50)},
             name="/lots [create]",
+        )
+
+    @task(1)
+    def create_work_order_lot(self):
+        quantity = random.randint(10, 50)
+        order_no = f"WO-{uuid4().hex}"
+        create = self.client.post(
+            "/work-orders",
+            json={
+                "order_no": order_no,
+                "product_code": random.choice(PRODUCTS),
+                "planned_quantity": quantity,
+                "priority": random.randint(1, 10),
+            },
+            name="/work-orders [create]",
+        )
+        if create.status_code != 200:
+            return
+        work_order_id = create.json()["id"]
+        release = self.client.post(
+            f"/work-orders/{work_order_id}/release",
+            name="/work-orders/[id]/release",
+        )
+        if release.status_code != 200:
+            return
+        self.client.post(
+            f"/work-orders/{work_order_id}/lots",
+            json={"quantity": quantity},
+            name="/work-orders/[id]/lots [create]",
         )
 
     @task(6)

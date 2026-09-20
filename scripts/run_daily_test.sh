@@ -4,8 +4,11 @@ cd "$(dirname "$0")/.."
 
 # The scheduler runs at 07:00 KST; using UTC here would mislabel every run
 # between KST 00:00-08:59 with the previous KST day (see ROADMAP.md).
-RUN_DATE=$(TZ=Asia/Seoul date +%Y-%m-%d)
-RAW_DIR="reports/raw/${RUN_DATE}"
+CALENDAR_DATE=$(TZ=Asia/Seoul date +%Y-%m-%d)
+# Daily automation uses the KST date. Named experiments can set MES_RUN_ID so
+# they do not overwrite the canonical daily report produced on the same day.
+RUN_ID="${MES_RUN_ID:-$CALENDAR_DATE}"
+RAW_DIR="reports/raw/${RUN_ID}"
 LOAD_PORT="${MES_LOAD_TEST_PORT:-18080}"
 LOAD_HOST="http://127.0.0.1:${LOAD_PORT}"
 mkdir -p "$RAW_DIR"
@@ -66,4 +69,4 @@ curl -s "$LOAD_HOST/metrics" -o "$RAW_DIR/mes_metrics.json"
 kill "$SERVER_PID" 2>/dev/null || true
 trap - EXIT
 
-python scripts/summarize.py "$RUN_DATE"
+python scripts/summarize.py "$RUN_ID"

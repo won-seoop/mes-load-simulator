@@ -31,6 +31,43 @@ class LotEventType(str, enum.Enum):
     LOT_COMPLETED = "LOT_COMPLETED"
 
 
+class WorkOrderStatus(str, enum.Enum):
+    CREATED = "CREATED"
+    RELEASED = "RELEASED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class Product(Base):
+    __tablename__ = "products"
+
+    code = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    route_name = Column(String, nullable=False, default="DEFAULT_ROUTE")
+    route_version = Column(Integer, nullable=False, default=1)
+    is_active = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class WorkOrder(Base):
+    __tablename__ = "work_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_no = Column(String, nullable=False, unique=True, index=True)
+    product_code = Column(String, ForeignKey("products.code"), nullable=False, index=True)
+    planned_quantity = Column(Integer, nullable=False)
+    released_quantity = Column(Integer, nullable=False, default=0)
+    completed_quantity = Column(Integer, nullable=False, default=0)
+    priority = Column(Integer, nullable=False, default=5)
+    due_at = Column(DateTime, nullable=True, index=True)
+    status = Column(
+        Enum(WorkOrderStatus), nullable=False, default=WorkOrderStatus.CREATED, index=True
+    )
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class Equipment(Base):
     __tablename__ = "equipment"
 
@@ -79,3 +116,13 @@ class LotEvent(Base):
     from_status = Column(Enum(LotStatus), nullable=True)
     to_status = Column(Enum(LotStatus), nullable=False)
     occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class WorkOrderLot(Base):
+    __tablename__ = "work_order_lots"
+    __table_args__ = (UniqueConstraint("lot_id", name="uq_work_order_lot_lot_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=False, index=True)
+    lot_id = Column(Integer, ForeignKey("lots.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

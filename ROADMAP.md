@@ -66,10 +66,16 @@
       실패 0건, Server 5xx 0건, IntegrityError 0건, 예상 409 충돌 34건을 확인했다. 개발 중이던
       다른 8000 포트 서버에 부하가 잘못 들어간 무효 실행도 발견해 부하 서버를 전용 18080 포트로
       분리하고 PID/Health 검증을 추가했다. EXP-002, ADR-002, PAR-001에 근거를 기록했다.
+- [x] (2026-09-20) Product Master, Work Order와 명시적 Lot State Machine 추가. 미등록/비활성
+      Product, 중복 작업지시 번호, Release 전 Lot 생성, 계획수량 초과를 거부한다. 계획 100에 동시
+      60/60 Lot 분할 시 DB 조건부 UPDATE로 한 건만 성공해 Released Quantity 60을 유지했다. 전체
+      48개 테스트 통과. Work Order 생성→Release→Lot 분할을 포함한 별도 50 VU/3분 EXP-003에서
+      18,976 requests, 0 failures, 105.68 RPS, P95 34ms, P99 77ms, Work Order 각 단계 878건,
+      Server 5xx 0을 측정했다. Workload 구성이 달라 EXP-002와 직접 성능 비교하지 않는다.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
-- [ ] Work Order(계획수량/납기/우선순위)와 명시적 Lot State Machine 구현
+- [ ] Quality Inspection, Defect Code, Scrap/Rework와 원인추적 구현
 - [ ] PostgreSQL 전환 후 조건부 UPDATE vs `SELECT FOR UPDATE` 동시성 비교
 - [ ] OEE(설비종합효율 = 가동률 x 성능 x 양품률) 지표 계산 및 `/metrics`에 추가
 - [ ] 설비 다운타임/알람 이벤트 모델 (DOWN 상태 발생·복구 이력 기록)
