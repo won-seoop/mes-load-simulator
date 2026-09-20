@@ -110,6 +110,53 @@ def _effective_run_seconds(eq: Equipment, now: datetime) -> float:
     return eq.run_seconds
 
 
+def _equipment_hold_wait_metrics(db: Session, now: datetime) -> dict:
+    """How long lots actually wait in equipment-down HOLD, from the event journal.
+
+    The Lot table only shows that a lot is currently HOLD, not since when, so
+    a stuck lot and a lot held one second ago look identical. This walks the
+    LOT_HELD / LOT_RELEASED_FROM_HOLD journal to recover both how long
+    currently-held lots have been waiting and how long past holds took to
+    clear, which is what actually locates a bottleneck step.
+    """
+    hold_events = (
+        db.query(LotEvent)
+        .filter(
+            LotEvent.event_type.in_(
+                [LotEventType.LOT_HELD, LotEventType.LOT_RELEASED_FROM_HOLD]
+            )
+        )
+        .order_by(LotEvent.lot_id, LotEvent.sequence_number)
+        .all()
+    )
+    resolved_durations: list[float] = []
+    open_hold_started_at: dict[int, datetime] = {}
+    for event in hold_events:
+        if event.event_type == LotEventType.LOT_HELD:
+            open_hold_started_at[event.lot_id] = event.occurred_at
+        else:
+            started_at = open_hold_started_at.pop(event.lot_id, None)
+            if started_at is not None:
+                resolved_durations.append((event.occurred_at - started_at).total_seconds())
+
+    held_lot_ids = {
+        lot_id for (lot_id,) in db.query(Lot.id).filter(Lot.status == LotStatus.HOLD).all()
+    }
+    current_waits = [
+        (now - started_at).total_seconds()
+        for lot_id, started_at in open_hold_started_at.items()
+        if lot_id in held_lot_ids
+    ]
+
+    return {
+        "lots_on_hold_count": len(current_waits),
+        "longest_current_hold_seconds": round(max(current_waits), 1) if current_waits else None,
+        "avg_resolved_hold_seconds": (
+            round(mean(resolved_durations), 1) if resolved_durations else None
+        ),
+    }
+
+
 def _compare_and_set_lot(
     db: Session,
     lot: Lot,
@@ -924,6 +971,7 @@ def metrics(db: Session = Depends(get_db)):
 
     window_start = datetime.utcnow() - timedelta(hours=1)
     throughput = completed_today_q.filter(Lot.completed_at >= window_start).count()
+    hold_wait = _equipment_hold_wait_metrics(db, now)
 
     return MetricsOut(
         wip_count=wip_count,
@@ -933,4 +981,5 @@ def metrics(db: Session = Depends(get_db)):
         avg_cycle_time_seconds=round(avg_cycle, 1) if avg_cycle is not None else None,
         equipment_utilization=equipment_utilization,
         throughput_per_hour=throughput,
+        **hold_wait,
     )

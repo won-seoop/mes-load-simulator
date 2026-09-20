@@ -85,6 +85,27 @@
 - [x] (2026-09-20) 공식 MCP Python SDK 기반 read-only MES Gateway 구현. Overview/Lot Trace Resource와
       품질 이상/Lot 추적/작업지시 Tool을 제공하며 In-memory MCP Smoke Test에서 INSPECT-03 WARNING을
       실제 호출해 확인했다. A2A 역할과 Command Safety 경계는 Architecture/ADR-006에 기록했다.
+- [x] (2026-09-21) 설비 다운으로 인한 HOLD 대기시간을 `/metrics`에 노출. 기존 Lot 테이블은 로트가
+      HOLD라는 사실만 보여주고 언제부터 대기 중인지는 알 수 없어 병목 판단이 불가능했는데, 이미
+      기록 중이던 `LOT_HELD`/`LOT_RELEASED_FROM_HOLD` Event Journal을 짝지어 `lots_on_hold_count`,
+      `longest_current_hold_seconds`, `avg_resolved_hold_seconds`를 계산하는 `_equipment_hold_wait_metrics`를
+      추가했다(해소되지 않은 값은 `avg_resolved_hold_seconds`를 `None`으로 유지 — 값을 지어내지 않음).
+      Freeze-time 기반 pytest 3개(대기 0건 baseline, 진행 중 대기 330초, 해소된 대기 120초)로 정확한
+      초 단위 계산을 검증했고, 실행 중인 서버에 curl로 직접 HOLD를 만들고 해제하는 수동 스모크
+      테스트로도 동일하게 확인했다. 이 지표를 실제 부하테스트에서 관찰하려면 설비 Down이 필요한데
+      기존 Locust 시나리오에는 설비 Down/복구가 전혀 없어서, 저확률 Fault Injection Task 2개
+      (`fault_inject_equipment_down`, `fault_recover_equipment`)를 추가했다. 첫 시도(매번 실행,
+      확률 Gate 없음)는 3분간 설비 상태를 579회 DOWN시켜 12대 설비가 평균 48회씩 뒤집혔고, 그 결과
+      완료 로트가 평소 270~320건에서 149건으로 급감하고 702개 로트가 미해소 HOLD로 쌓이는 실패
+      사례를 만들었다 — 삭제하지 않고 `FAULT_DOWN_PROBABILITY` 상수 도입 근거로 `load_test/locustfile.py`
+      주석에 그대로 남겼다. `FAULT_DOWN_PROBABILITY=0.05`로 낮추자 완료 로트 207~219건, WIP 2369~2497건으로
+      전일 EXP-005 Baseline(완료 216건, WIP 2648건)과 같은 범위로 돌아왔다. 다만 이 확률에서는 같은
+      공정의 설비 3대가 동시에 모두 DOWN되는 경우가 드물어(해당 실행에서 다운 29회/복구 32회에도
+      HOLD 0건) 일일 부하테스트가 새 지표를 매번 관측하지는 못했는데, `/metrics`를 실행 끝에 한 번만
+      읽으면 이미 해소된 짧은 HOLD도 놓칠 수 있어서 `scripts/run_daily_test.sh`가 10초 간격으로
+      `/metrics`를 백그라운드로 샘플링해 `mes_metrics_samples.jsonl`에 남기고, `scripts/summarize.py`가
+      실행 중 관측된 최대 HOLD 로트 수/최대 대기시간을 리포트에 추가로 표기하도록 했다. 65개 pytest
+      전체 통과, 50 VU/3분 파이프라인 정상 동작(실패율 0%, Server 5xx/IntegrityError 0)을 재확인했다.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
@@ -95,15 +116,18 @@
 - [ ] OEE(설비종합효율 = 가동률 x 성능 x 양품률) 지표 계산 및 `/metrics`에 추가
 - [ ] 설비 다운타임/알람 이벤트 모델 (DOWN 상태 발생·복구 이력 기록)
 - [ ] 전일 대비 이상 탐지 고도화 (단순 임계치 대신 최근 N일 평균/표준편차 기반)
-- [ ] Locust 시나리오 다양화 (설비 랜덤 다운, 우선순위 로트, 배치 사이즈 변화)
+- [ ] Locust 우선순위 로트/배치 사이즈 변화 시나리오 (설비 랜덤 다운은 2026-09-21에 추가 완료)
+- [ ] 같은 공정 스텝의 설비를 한꺼번에 묶어 내리는 "스텝 전체 다운" Fault 추가 — 현재의 개별 설비
+      독립 확률 다운(`FAULT_DOWN_PROBABILITY=0.05`)만으로는 3대가 동시에 모두 DOWN될 확률이 낮아
+      일일 부하테스트가 HOLD 대기시간 지표를 매번 실제로 관측하지 못한다(2026-09-21 리포트 참고).
+      이 Fault를 추가하면 회귀 테스트가 매 실행마다 최소 1회 이상 HOLD/복구 사이클을 안정적으로
+      재현할 수 있다.
 - [ ] SQLite -> Postgres 전환 옵션 (docker-compose, 동시성 부하테스트에 더 현실적)
 - [ ] 일자별 트렌드를 보여주는 간단한 대시보드 (정적 HTML + Chart.js, reports/ 데이터를 읽어서 생성)
 - [ ] API 인증(JWT 또는 API key) 추가
 - [ ] Dockerfile 작성 (배포/실행 편의성)
 - [ ] README에 아키텍처 다이어그램 추가
 - [ ] 구조화된 로깅 (structlog 등) 및 요청 추적 ID
-- [ ] 설비 다운/HOLD가 반복될 때 HOLD 상태로 머무는 시간(대기시간)을 지표로 노출 —
-      현재는 HOLD로 빠진 로트가 언제부터 대기 중인지 알 수 없어 실제 병목 파악이 어려움
 - [ ] `reports/raw/<date>/`의 locust CSV/서버 로그가 무기한 누적되므로 보관 기간 정책
       (예: N일 지난 raw 데이터는 압축하거나 삭제) 추가
 - [ ] CI(`ci.yml`)에 ruff(lint/format)와 `pytest-cov` 커버리지 리포트 단계 추가 — 지금은

@@ -5,6 +5,16 @@ from locust import HttpUser, between, task
 
 PRODUCTS = ["WAFER-A", "WAFER-B", "PANEL-X", "PANEL-Y"]
 
+# The fault-injection task below is picked as often as any other weight-1
+# task, i.e. roughly once every couple of seconds per user. Firing an actual
+# equipment DOWN every time it is picked was tried first and is a documented
+# failure case (see ROADMAP.md, 2026-09-21): with 50 concurrent users it
+# produced ~580 down-flips in 3 minutes, permanently stranding 702 lots and
+# dropping completed lots for the day from the usual ~270-320 to 149. This
+# gate keeps most picks a no-op so equipment DOWN stays an occasional,
+# recoverable fault instead of the dominant behavior of the whole run.
+FAULT_DOWN_PROBABILITY = 0.05
+
 
 class MesUser(HttpUser):
     wait_time = between(0.2, 1.2)
@@ -154,3 +164,43 @@ class MesUser(HttpUser):
     @task(2)
     def check_metrics(self):
         self.client.get("/metrics", name="/metrics")
+
+    @task(1)
+    def fault_inject_equipment_down(self):
+        # Independent fault injection: occasionally take one running tool
+        # down, mirroring a real intermittent equipment fault. Gated by
+        # FAULT_DOWN_PROBABILITY (see its comment) so it stays rare relative
+        # to advance_lot; fault_recover_equipment below brings it back so
+        # downtime is transient rather than permanent.
+        if random.random() > FAULT_DOWN_PROBABILITY:
+            return
+        response = self.client.get("/equipment", name="/equipment [list]")
+        if response.status_code != 200:
+            return
+        candidates = [eq for eq in response.json() if eq["status"] != "DOWN"]
+        if not candidates:
+            return
+        target = random.choice(candidates)
+        self.client.patch(
+            f"/equipment/{target['id']}/status",
+            json={"status": "DOWN"},
+            name="/equipment/[id]/status [fault: down]",
+        )
+
+    @task(1)
+    def fault_recover_equipment(self):
+        # Unconditional (relative to the down-side gate above) so a fault
+        # never outpaces its own recovery and a whole process step is not
+        # left down for long.
+        response = self.client.get("/equipment", name="/equipment [list]")
+        if response.status_code != 200:
+            return
+        down = [eq for eq in response.json() if eq["status"] == "DOWN"]
+        if not down:
+            return
+        target = random.choice(down)
+        self.client.patch(
+            f"/equipment/{target['id']}/status",
+            json={"status": "IDLE"},
+            name="/equipment/[id]/status [fault: recover]",
+        )

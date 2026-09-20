@@ -48,6 +48,23 @@ if [ "$SERVER_READY" -ne 1 ]; then
   exit 1
 fi
 
+# A single /metrics scrape after locust finishes can miss a HOLD that was
+# already resolved by then (equipment-down HOLD is meant to be transient).
+# Sample every 10s while locust runs so summarize.py can report the worst
+# HOLD wait actually observed during the run, not just whatever the final
+# instant happened to look like.
+SAMPLES_FILE="$RAW_DIR/mes_metrics_samples.jsonl"
+: > "$SAMPLES_FILE"
+(
+  while kill -0 "$SERVER_PID" 2>/dev/null; do
+    curl -s "$LOAD_HOST/metrics" >> "$SAMPLES_FILE"
+    echo >> "$SAMPLES_FILE"
+    sleep 10
+  done
+) &
+SAMPLER_PID=$!
+trap 'kill $SERVER_PID $SAMPLER_PID 2>/dev/null || true' EXIT
+
 set +e
 locust -f load_test/locustfile.py --headless \
   -u 50 -r 5 -t 3m \
@@ -63,6 +80,8 @@ if [ "$LOCUST_EXIT" -gt 1 ]; then
   echo "locust exited with unexpected code $LOCUST_EXIT" >&2
   exit "$LOCUST_EXIT"
 fi
+
+kill "$SAMPLER_PID" 2>/dev/null || true
 
 curl -s "$LOAD_HOST/metrics" -o "$RAW_DIR/mes_metrics.json"
 curl -s "$LOAD_HOST/quality/metrics" -o "$RAW_DIR/quality_metrics.json"

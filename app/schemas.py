@@ -184,3 +184,6 @@ class MetricsOut(BaseModel):
     avg_cycle_time_seconds: Optional[float]
     equipment_utilization: dict
     throughput_per_hour: float
+    lots_on_hold_count: int
+    longest_current_hold_seconds: Optional[float]
+    avg_resolved_hold_seconds: Optional[float]

@@ -32,6 +32,27 @@ def load_locust_stats(raw_dir: Path) -> dict:
     }
 
 
+def load_metrics_samples(raw_dir: Path) -> list[dict]:
+    """/metrics polled every 10s while locust ran, not just the final snapshot.
+
+    Equipment-down HOLD is meant to be transient, so a lot can be stuck for
+    much of the run and still show 0 in a single end-of-run scrape once
+    recovery clears it. Peak values across these samples catch that.
+    """
+    samples_file = raw_dir / "mes_metrics_samples.jsonl"
+    if not samples_file.exists():
+        return []
+    samples = []
+    for line in samples_file.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            samples.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return samples
+
+
 def main():
     run_date = sys.argv[1]
     raw_dir = Path("reports/raw") / run_date
@@ -39,6 +60,16 @@ def main():
 
     mes_metrics_file = raw_dir / "mes_metrics.json"
     mes_metrics = json.loads(mes_metrics_file.read_text()) if mes_metrics_file.exists() else {}
+    metrics_samples = load_metrics_samples(raw_dir)
+    peak_lots_on_hold = max(
+        (s.get("lots_on_hold_count", 0) for s in metrics_samples), default=None
+    )
+    hold_wait_samples = [
+        s.get("longest_current_hold_seconds")
+        for s in metrics_samples
+        if s.get("longest_current_hold_seconds") is not None
+    ]
+    peak_hold_wait_seconds = max(hold_wait_samples) if hold_wait_samples else None
     quality_metrics_file = raw_dir / "quality_metrics.json"
     quality_metrics = (
         json.loads(quality_metrics_file.read_text()) if quality_metrics_file.exists() else {}
@@ -54,6 +85,11 @@ def main():
         "date": run_date,
         "load_test": load_stats,
         "mes_metrics": mes_metrics,
+        "mes_metrics_peak_during_run": {
+            "sample_count": len(metrics_samples),
+            "peak_lots_on_hold_count": peak_lots_on_hold,
+            "peak_longest_hold_seconds": peak_hold_wait_seconds,
+        },
         "quality_metrics": quality_metrics,
         "quality_anomalies": quality_anomalies,
     }
@@ -113,6 +149,19 @@ def main():
         md.append(f"- Avg cycle time (s): {mes_metrics.get('avg_cycle_time_seconds')}")
         md.append(f"- Throughput/hr: {mes_metrics.get('throughput_per_hour')}")
         md.append(f"- Equipment utilization (s run): {mes_metrics.get('equipment_utilization')}")
+        md.append(f"- Lots on equipment-down HOLD (end of run): {mes_metrics.get('lots_on_hold_count')}")
+        md.append(
+            f"- Longest current HOLD wait, end of run (s): "
+            f"{mes_metrics.get('longest_current_hold_seconds')}"
+        )
+        md.append(
+            f"- Peak lots on HOLD during run (of {len(metrics_samples)} samples): "
+            f"{peak_lots_on_hold}"
+        )
+        md.append(f"- Peak HOLD wait observed during run (s): {peak_hold_wait_seconds}")
+        md.append(
+            f"- Avg resolved HOLD wait (s): {mes_metrics.get('avg_resolved_hold_seconds')}"
+        )
     else:
         md.append("- (no data)")
 

@@ -192,3 +192,61 @@ def test_completed_today_resets_at_kst_midnight_not_utc_midnight(client, monkeyp
 
     metrics = client.get("/metrics").json()
     assert metrics["completed_today"] == 1
+
+
+def _hold_first_step_lot(client):
+    """Create a lot and drive it into HOLD by taking down all first-step tools."""
+    lot = _create_lot(client)
+    equipment = client.get("/equipment").json()
+    first_step_ids = [eq["id"] for eq in equipment if eq["process_step"] == PROCESS_ROUTE[0]]
+    for eq_id in first_step_ids:
+        client.patch(f"/equipment/{eq_id}/status", json={"status": "DOWN"})
+    lot = client.post(f"/lots/{lot['id']}/advance").json()
+    assert lot["status"] == "HOLD"
+    return lot, first_step_ids
+
+
+def test_metrics_report_no_hold_wait_when_nothing_is_held(client):
+    """Baseline: with no HOLD lots the hold-wait fields must stay empty/None,
+    never a fabricated zero duration for something that never happened."""
+    metrics = client.get("/metrics").json()
+    assert metrics["lots_on_hold_count"] == 0
+    assert metrics["longest_current_hold_seconds"] is None
+    assert metrics["avg_resolved_hold_seconds"] is None
+
+
+def test_metrics_expose_current_hold_wait_duration(client, monkeypatch):
+    """Regression test: the Lot table only says a lot is HOLD, not since when.
+    /metrics must recover "how long" from the LOT_HELD event journal so a lot
+    stuck for 10 minutes is distinguishable from one held a second ago."""
+    held_at = datetime(2026, 9, 21, 1, 0, 0)
+    checked_at = datetime(2026, 9, 21, 1, 5, 30)  # 330s later
+
+    _freeze_time(monkeypatch, held_at)
+    _hold_first_step_lot(client)
+
+    _freeze_time(monkeypatch, checked_at)
+    metrics = client.get("/metrics").json()
+    assert metrics["lots_on_hold_count"] == 1
+    assert metrics["longest_current_hold_seconds"] == 330.0
+    assert metrics["avg_resolved_hold_seconds"] is None  # not yet resolved
+
+
+def test_metrics_expose_avg_resolved_hold_duration_after_recovery(client, monkeypatch):
+    """Once equipment frees up and the lot is released from HOLD, that wait
+    becomes a resolved sample instead of vanishing from the metric."""
+    held_at = datetime(2026, 9, 21, 1, 0, 0)
+    released_at = datetime(2026, 9, 21, 1, 2, 0)  # 120s hold
+
+    _freeze_time(monkeypatch, held_at)
+    lot, first_step_ids = _hold_first_step_lot(client)
+
+    _freeze_time(monkeypatch, released_at)
+    client.patch(f"/equipment/{first_step_ids[0]}/status", json={"status": "IDLE"})
+    lot = client.post(f"/lots/{lot['id']}/advance").json()
+    assert lot["status"] == "PROCESSING"
+
+    metrics = client.get("/metrics").json()
+    assert metrics["lots_on_hold_count"] == 0
+    assert metrics["longest_current_hold_seconds"] is None
+    assert metrics["avg_resolved_hold_seconds"] == 120.0
