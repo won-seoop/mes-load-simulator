@@ -71,6 +71,83 @@ class MesUser(HttpUser):
                 advance.success()
 
     @task(2)
+    def inspect_or_disposition_lot(self):
+        response = self.client.get(
+            "/lots?status=QUALITY_HOLD",
+            name="/lots [list quality hold]",
+        )
+        if response.status_code != 200 or not response.json():
+            return
+        lot = random.choice(response.json())
+        events = self.client.get(
+            f"/lots/{lot['id']}/events",
+            name="/lots/[id]/events [quality trace]",
+        )
+        if events.status_code != 200:
+            return
+        inspect_events = [
+            event
+            for event in events.json()
+            if event["event_type"] == "PROCESS_COMPLETED"
+            and event["process_step"] == "INSPECT"
+        ]
+        equipment_id = inspect_events[-1]["equipment_id"] if inspect_events else None
+
+        # Deterministic fault injection: every fourth lot handled by the third
+        # tool in an INSPECT group fails. This creates a reproducible
+        # equipment-correlated defect pattern for quality anomaly analysis.
+        should_fail = (
+            equipment_id is not None
+            and equipment_id % 3 == 0
+            and lot["id"] % 4 == 0
+        )
+        if not should_fail:
+            with self.client.post(
+                f"/lots/{lot['id']}/inspections",
+                json={"result": "PASS"},
+                name="/lots/[id]/inspections [pass]",
+                catch_response=True,
+            ) as inspection:
+                if inspection.status_code == 409:
+                    inspection.request_meta["name"] = "/lots/[id]/inspections [conflict]"
+                    inspection.success()
+            return
+
+        with self.client.post(
+            f"/lots/{lot['id']}/inspections",
+            json={"result": "FAIL", "defect_code": "INSPECT_SENSOR_DRIFT"},
+            name="/lots/[id]/inspections [fail]",
+            catch_response=True,
+        ) as failed:
+            if failed.status_code == 409:
+                failed.request_meta["name"] = "/lots/[id]/inspections [conflict]"
+                failed.success()
+                return
+            if failed.status_code != 200:
+                return
+            attempt_number = failed.json()["attempt_number"]
+
+        # One corrective cycle is allowed. A repeated failure is scrapped so
+        # persistent equipment faults cannot create an unbounded rework loop.
+        disposition = "REWORK" if attempt_number == 1 else "SCRAP"
+        with self.client.post(
+            f"/lots/{lot['id']}/quality-disposition",
+            json={"disposition": disposition},
+            name=f"/lots/[id]/quality-disposition [{disposition.lower()}]",
+            catch_response=True,
+        ) as result:
+            if result.status_code == 409:
+                result.request_meta["name"] = "/lots/[id]/quality-disposition [conflict]"
+                result.success()
+                return
+            if result.status_code == 200 and disposition == "REWORK":
+                self.client.post(
+                    f"/lots/{lot['id']}/rework-release",
+                    json={"step_index": 2},
+                    name="/lots/[id]/rework-release",
+                )
+
+    @task(2)
     def list_equipment(self):
         self.client.get("/equipment", name="/equipment [list]")
 

@@ -1,0 +1,53 @@
+{
+  "date": "2026-09-20-exp004-after",
+  "load_test": {
+    "requests": 18050,
+    "failures": 0,
+    "failure_rate": 0.0,
+    "rps": 100.48351328069434,
+    "p95_ms": 180.0,
+    "p99_ms": 570.0,
+    "avg_ms": 44.34103565444071,
+    "business_conflicts": 124,
+    "server_5xx": 0,
+    "integrity_errors": 0
+  },
+  "mes_metrics": {
+    "wip_count": 2716,
+    "completed_today": 189,
+    "scrap_count": 10,
+    "yield_rate": 0.9497,
+    "avg_cycle_time_seconds": 18.1,
+    "equipment_utilization": {
+      "ETCH-01": 178.9,
+      "ETCH-02": 178.2,
+      "ETCH-03": 178.0,
+      "CVD-01": 178.5,
+      "CVD-02": 177.9,
+      "CVD-03": 177.7,
+      "CMP-01": 178.2,
+      "CMP-02": 177.7,
+      "CMP-03": 176.9,
+      "INSPECT-01": 177.9,
+      "INSPECT-02": 177.3,
+      "INSPECT-03": 176.5
+    },
+    "throughput_per_hour": 189.0
+  },
+  "quality_metrics": {
+    "total_inspections": 270,
+    "pass_count": 189,
+    "fail_count": 81,
+    "defect_rate": 0.3,
+    "first_pass_yield": 0.7269,
+    "scrap_count": 10,
+    "rework_count": 71,
+    "rework_rate": 0.2731,
+    "defects_by_process": {
+      "INSPECT": 81
+    },
+    "defects_by_equipment": {
+      "INSPECT-03": 81
+    }
+  }
+}

@@ -13,9 +13,8 @@ def load_locust_stats(raw_dir: Path) -> dict:
     total = next((r for r in rows if r["Name"] == "Aggregated"), None)
     if not total:
         return {}
-    conflict = next(
-        (r for r in rows if r["Name"] == "/lots/[id]/advance [conflict]"),
-        None,
+    business_conflicts = sum(
+        int(row["Request Count"]) for row in rows if "[conflict]" in row["Name"]
     )
     server_log = raw_dir / "server.log"
     server_log_text = server_log.read_text() if server_log.exists() else ""
@@ -27,7 +26,7 @@ def load_locust_stats(raw_dir: Path) -> dict:
         "p95_ms": float(total["95%"]),
         "p99_ms": float(total["99%"]),
         "avg_ms": float(total["Average Response Time"]),
-        "business_conflicts": int(conflict["Request Count"]) if conflict else 0,
+        "business_conflicts": business_conflicts,
         "server_5xx": len(re.findall(r'HTTP/1\.1 5\d\d ', server_log_text)),
         "integrity_errors": server_log_text.count("IntegrityError"),
     }
@@ -40,8 +39,24 @@ def main():
 
     mes_metrics_file = raw_dir / "mes_metrics.json"
     mes_metrics = json.loads(mes_metrics_file.read_text()) if mes_metrics_file.exists() else {}
+    quality_metrics_file = raw_dir / "quality_metrics.json"
+    quality_metrics = (
+        json.loads(quality_metrics_file.read_text()) if quality_metrics_file.exists() else {}
+    )
+    quality_anomalies_file = raw_dir / "quality_anomalies.json"
+    quality_anomalies = (
+        json.loads(quality_anomalies_file.read_text())
+        if quality_anomalies_file.exists()
+        else {}
+    )
 
-    summary = {"date": run_date, "load_test": load_stats, "mes_metrics": mes_metrics}
+    summary = {
+        "date": run_date,
+        "load_test": load_stats,
+        "mes_metrics": mes_metrics,
+        "quality_metrics": quality_metrics,
+        "quality_anomalies": quality_anomalies,
+    }
 
     reports_dir = Path("reports")
     reports_dir.mkdir(exist_ok=True)
@@ -58,6 +73,34 @@ def main():
         md.append(f"- Expected state conflicts (409): {load_stats['business_conflicts']}")
         md.append(f"- Server 5xx: {load_stats['server_5xx']}")
         md.append(f"- Integrity errors: {load_stats['integrity_errors']}")
+    else:
+        md.append("- (no data)")
+
+    md.append("")
+    md.append("## Quality Anomalies")
+    if quality_anomalies:
+        anomalies = quality_anomalies.get("anomalies", [])
+        md.append(f"- Method: {quality_anomalies.get('method')}")
+        md.append(f"- Detected: {len(anomalies)}")
+        for anomaly in anomalies:
+            md.append(
+                f"- {anomaly['equipment_name']}: {anomaly['severity']}, "
+                f"defect rate {anomaly['defect_rate'] * 100:.2f}% vs "
+                f"peer mean {anomaly['peer_mean_rate'] * 100:.2f}% "
+                f"(n={anomaly['total_inspections']})"
+            )
+    else:
+        md.append("- (no data)")
+
+    md.append("")
+    md.append("## Quality Metrics")
+    if quality_metrics:
+        md.append(f"- Total inspections: {quality_metrics.get('total_inspections')}")
+        md.append(f"- First pass yield: {quality_metrics.get('first_pass_yield', 0) * 100:.2f}%")
+        md.append(f"- Defect rate: {quality_metrics.get('defect_rate', 0) * 100:.2f}%")
+        md.append(f"- Scrap count: {quality_metrics.get('scrap_count')}")
+        md.append(f"- Rework count: {quality_metrics.get('rework_count')}")
+        md.append(f"- Defects by equipment: {quality_metrics.get('defects_by_equipment')}")
     else:
         md.append("- (no data)")
 

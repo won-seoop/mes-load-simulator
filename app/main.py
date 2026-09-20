@@ -1,8 +1,8 @@
-import random
 from datetime import datetime, timedelta
+from statistics import mean, pstdev
 
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import func, update
+from sqlalchemy import case, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,17 +11,21 @@ from app.models import (
     PROCESS_ROUTE,
     Equipment,
     EquipmentStatus,
+    InspectionResult,
     Lot,
     LotEvent,
     LotEventType,
     LotStatus,
     Product,
+    QualityDisposition,
+    QualityInspection,
     WorkOrder,
     WorkOrderLot,
     WorkOrderStatus,
 )
 from app.schemas import (
     EquipmentOut,
+    EquipmentQualityAnomalyOut,
     EquipmentStatusUpdate,
     LotCreate,
     LotEventOut,
@@ -29,6 +33,12 @@ from app.schemas import (
     MetricsOut,
     ProductCreate,
     ProductOut,
+    QualityDispositionCreate,
+    QualityInspectionCreate,
+    QualityInspectionOut,
+    QualityMetricsOut,
+    QualityAnomalyReportOut,
+    ReworkReleaseCreate,
     WorkOrderCreate,
     WorkOrderLotCreate,
     WorkOrderOut,
@@ -40,13 +50,20 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="MES Simulator", version="0.1.0")
 
-SCRAP_PROBABILITY = 0.03
 DEFAULT_PRODUCTS = (
     ("WAFER-A", "Wafer A"),
     ("WAFER-B", "Wafer B"),
     ("PANEL-X", "Panel X"),
     ("PANEL-Y", "Panel Y"),
 )
+
+# A lot may be sent through one corrective rework cycle. Repeatedly routing a
+# known-bad lot through the same equipment hides a persistent defect and can
+# grow WIP forever, so a second failed inspection must be dispositioned SCRAP.
+MAX_REWORK_CYCLES = 1
+ANOMALY_MIN_INSPECTIONS = 10
+ANOMALY_MIN_RATE_DELTA = 0.10
+ANOMALY_MIN_Z_SCORE = 2.0
 
 
 def _append_lot_event(
@@ -99,6 +116,7 @@ def _compare_and_set_lot(
     *,
     expected_status: LotStatus,
     expected_step_index: int,
+    expected_updated_at: datetime | None = None,
     values: dict,
 ) -> bool:
     """Apply one lot transition only if its observed state is still current.
@@ -107,13 +125,16 @@ def _compare_and_set_lot(
     competing request's conditional UPDATE matches zero rows and becomes a
     business conflict instead of advancing the same lot twice.
     """
+    conditions = [
+        Lot.id == lot.id,
+        Lot.status == expected_status,
+        Lot.step_index == expected_step_index,
+    ]
+    if expected_updated_at is not None:
+        conditions.append(Lot.updated_at == expected_updated_at)
     result = db.execute(
         update(Lot)
-        .where(
-            Lot.id == lot.id,
-            Lot.status == expected_status,
-            Lot.step_index == expected_step_index,
-        )
+        .where(*conditions)
         .values(**values)
         .execution_options(synchronize_session=False)
     )
@@ -130,6 +151,28 @@ def _raise_lot_conflict(lot_id: int) -> None:
         409,
         f"lot {lot_id} changed concurrently; reload its current state and retry",
     )
+
+
+def _complete_work_order_for_lot(db: Session, lot: Lot, now: datetime) -> None:
+    association = (
+        db.query(WorkOrderLot).filter(WorkOrderLot.lot_id == lot.id).one_or_none()
+    )
+    if not association:
+        return
+    db.execute(
+        update(WorkOrder)
+        .where(WorkOrder.id == association.work_order_id)
+        .values(
+            completed_quantity=WorkOrder.completed_quantity + lot.quantity,
+            updated_at=now,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    db.flush()
+    work_order = db.get(WorkOrder, association.work_order_id)
+    db.refresh(work_order)
+    if work_order.completed_quantity >= work_order.planned_quantity:
+        work_order.status = WorkOrderStatus.COMPLETED
 
 
 @app.on_event("startup")
@@ -372,7 +415,7 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     if not lot:
         raise HTTPException(404, "lot not found")
-    if lot.status == LotStatus.DONE:
+    if lot.status not in (LotStatus.WAITING, LotStatus.PROCESSING, LotStatus.HOLD):
         raise HTTPException(409, f"lot is {lot.status}, cannot advance")
     # A HOLD lot is retried at its current step once equipment frees up,
     # rather than being stuck forever (equipment down is a transient state).
@@ -385,9 +428,14 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
         .filter(Equipment.process_step == step, Equipment.status != EquipmentStatus.DOWN)
         .all()
     )
-    # Dispatch to the least-utilized available tool of this step (instead of
-    # always the same one) so parallel equipment capacity is actually used.
-    eq = min(candidates, key=lambda e: _effective_run_seconds(e, now), default=None)
+    # Wall-clock RUN time converges even when assignments are skewed because
+    # this simulator leaves tools in RUN. Use completed dispatch count as the
+    # primary fairness signal and run time only as a deterministic tie-breaker.
+    eq = min(
+        candidates,
+        key=lambda e: (e.dispatch_count, _effective_run_seconds(e, now), e.id),
+        default=None,
+    )
     if not eq:
         if previous_status != LotStatus.HOLD:
             ensure_lot_transition(previous_status, LotStatus.HOLD)
@@ -417,24 +465,21 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
         eq.run_seconds += (now - eq.last_status_change).total_seconds()
     eq.status = EquipmentStatus.RUN
     eq.last_status_change = now
+    eq.dispatch_count += 1
 
     expected_step_index = lot.step_index
     next_step_index = expected_step_index + 1
     next_status = (
-        LotStatus.DONE
+        LotStatus.QUALITY_HOLD
         if next_step_index >= len(PROCESS_ROUTE)
         else LotStatus.PROCESSING
     )
-    next_is_scrap = 1 if lot.is_scrap or random.random() < SCRAP_PROBABILITY else 0
     ensure_lot_transition(previous_status, next_status)
     transition_values = {
         "step_index": next_step_index,
         "status": next_status,
-        "is_scrap": next_is_scrap,
         "updated_at": now,
     }
-    if next_status == LotStatus.DONE:
-        transition_values["completed_at"] = now
 
     transitioned = _compare_and_set_lot(
         db,
@@ -471,44 +516,390 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
         equipment_id=eq.id,
         occurred_at=now,
     )
-    if lot.status == LotStatus.DONE:
-        _append_lot_event(
-            db,
-            lot,
-            LotEventType.LOT_COMPLETED,
-            from_status=LotStatus.DONE,
-            to_status=LotStatus.DONE,
-            process_step=step,
-            equipment_id=eq.id,
-            occurred_at=now,
-        )
-        association = (
-            db.query(WorkOrderLot).filter(WorkOrderLot.lot_id == lot.id).one_or_none()
-        )
-        if association:
-            db.execute(
-                update(WorkOrder)
-                .where(WorkOrder.id == association.work_order_id)
-                .values(
-                    completed_quantity=WorkOrder.completed_quantity + lot.quantity,
-                    updated_at=now,
-                )
-                .execution_options(synchronize_session=False)
-            )
-            db.flush()
-            work_order = db.get(WorkOrder, association.work_order_id)
-            db.refresh(work_order)
-            if work_order.completed_quantity >= work_order.planned_quantity:
-                work_order.status = WorkOrderStatus.COMPLETED
-
     db.commit()
     db.refresh(lot)
     return lot
 
 
+@app.get("/lots/{lot_id}/inspections", response_model=list[QualityInspectionOut])
+def list_quality_inspections(lot_id: int, db: Session = Depends(get_db)):
+    if not db.get(Lot, lot_id):
+        raise HTTPException(404, "lot not found")
+    return (
+        db.query(QualityInspection)
+        .filter(QualityInspection.lot_id == lot_id)
+        .order_by(QualityInspection.attempt_number)
+        .all()
+    )
+
+
+@app.post("/lots/{lot_id}/inspections", response_model=QualityInspectionOut)
+def inspect_lot(
+    lot_id: int,
+    body: QualityInspectionCreate,
+    db: Session = Depends(get_db),
+):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        raise HTTPException(404, "lot not found")
+    if lot.status != LotStatus.QUALITY_HOLD:
+        raise HTTPException(409, f"lot is {lot.status}, not awaiting inspection")
+    if body.result == InspectionResult.FAIL and not body.defect_code:
+        raise HTTPException(422, "defect_code is required for failed inspection")
+    if body.result == InspectionResult.PASS and body.defect_code:
+        raise HTTPException(422, "passing inspection cannot have a defect_code")
+
+    pending_failure = (
+        db.query(QualityInspection)
+        .filter(
+            QualityInspection.lot_id == lot_id,
+            QualityInspection.result == InspectionResult.FAIL,
+            QualityInspection.disposition == QualityDisposition.PENDING,
+        )
+        .first()
+    )
+    if pending_failure:
+        raise HTTPException(409, "failed inspection requires disposition first")
+
+    last_process = (
+        db.query(LotEvent)
+        .filter(
+            LotEvent.lot_id == lot_id,
+            LotEvent.event_type == LotEventType.PROCESS_COMPLETED,
+            LotEvent.process_step == "INSPECT",
+        )
+        .order_by(LotEvent.sequence_number.desc())
+        .first()
+    )
+    attempt_number = (
+        db.query(func.max(QualityInspection.attempt_number))
+        .filter(QualityInspection.lot_id == lot_id)
+        .scalar()
+        or 0
+    ) + 1
+    now = datetime.utcnow()
+    previous_updated_at = lot.updated_at
+    next_status = (
+        LotStatus.DONE if body.result == InspectionResult.PASS else LotStatus.QUALITY_HOLD
+    )
+    values = {"status": next_status, "updated_at": now}
+    if next_status == LotStatus.DONE:
+        ensure_lot_transition(LotStatus.QUALITY_HOLD, LotStatus.DONE)
+        values["completed_at"] = now
+    transitioned = _compare_and_set_lot(
+        db,
+        lot,
+        expected_status=LotStatus.QUALITY_HOLD,
+        expected_step_index=lot.step_index,
+        expected_updated_at=previous_updated_at,
+        values=values,
+    )
+    if not transitioned:
+        _raise_lot_conflict(lot_id)
+
+    inspection = QualityInspection(
+        lot_id=lot_id,
+        attempt_number=attempt_number,
+        process_step="INSPECT",
+        equipment_id=last_process.equipment_id if last_process else None,
+        result=body.result,
+        defect_code=body.defect_code,
+        disposition=(
+            QualityDisposition.NONE
+            if body.result == InspectionResult.PASS
+            else QualityDisposition.PENDING
+        ),
+        inspected_at=now,
+    )
+    db.add(inspection)
+    if body.result == InspectionResult.FAIL:
+        _append_lot_event(
+            db,
+            lot,
+            LotEventType.DEFECT_RECORDED,
+            from_status=LotStatus.QUALITY_HOLD,
+            to_status=LotStatus.QUALITY_HOLD,
+            process_step="INSPECT",
+            equipment_id=inspection.equipment_id,
+            occurred_at=now,
+        )
+    else:
+        _append_lot_event(
+            db,
+            lot,
+            LotEventType.LOT_COMPLETED,
+            from_status=LotStatus.QUALITY_HOLD,
+            to_status=LotStatus.DONE,
+            process_step="INSPECT",
+            equipment_id=inspection.equipment_id,
+            occurred_at=now,
+        )
+        _complete_work_order_for_lot(db, lot, now)
+    db.commit()
+    db.refresh(inspection)
+    return inspection
+
+
+@app.post("/lots/{lot_id}/quality-disposition", response_model=LotOut)
+def disposition_lot(
+    lot_id: int,
+    body: QualityDispositionCreate,
+    db: Session = Depends(get_db),
+):
+    if body.disposition not in (QualityDisposition.SCRAP, QualityDisposition.REWORK):
+        raise HTTPException(422, "disposition must be SCRAP or REWORK")
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        raise HTTPException(404, "lot not found")
+    if lot.status != LotStatus.QUALITY_HOLD:
+        raise HTTPException(409, f"lot is {lot.status}, cannot disposition")
+    inspection = (
+        db.query(QualityInspection)
+        .filter(
+            QualityInspection.lot_id == lot_id,
+            QualityInspection.result == InspectionResult.FAIL,
+            QualityInspection.disposition == QualityDisposition.PENDING,
+        )
+        .order_by(QualityInspection.attempt_number.desc())
+        .first()
+    )
+    if not inspection:
+        raise HTTPException(409, "no failed inspection is awaiting disposition")
+
+    if body.disposition == QualityDisposition.REWORK:
+        previous_reworks = (
+            db.query(QualityInspection)
+            .filter(
+                QualityInspection.lot_id == lot_id,
+                QualityInspection.disposition == QualityDisposition.REWORK,
+            )
+            .count()
+        )
+        if previous_reworks >= MAX_REWORK_CYCLES:
+            raise HTTPException(
+                409,
+                "maximum rework cycles reached; SCRAP disposition is required",
+            )
+
+    now = datetime.utcnow()
+    next_status = (
+        LotStatus.SCRAPPED
+        if body.disposition == QualityDisposition.SCRAP
+        else LotStatus.REWORK
+    )
+    ensure_lot_transition(LotStatus.QUALITY_HOLD, next_status)
+    values = {"status": next_status, "updated_at": now}
+    if next_status == LotStatus.SCRAPPED:
+        values["is_scrap"] = 1
+    transitioned = _compare_and_set_lot(
+        db,
+        lot,
+        expected_status=LotStatus.QUALITY_HOLD,
+        expected_step_index=lot.step_index,
+        expected_updated_at=lot.updated_at,
+        values=values,
+    )
+    if not transitioned:
+        _raise_lot_conflict(lot_id)
+    inspection.disposition = body.disposition
+    _append_lot_event(
+        db,
+        lot,
+        (
+            LotEventType.LOT_SCRAPPED
+            if next_status == LotStatus.SCRAPPED
+            else LotEventType.LOT_REWORKED
+        ),
+        from_status=LotStatus.QUALITY_HOLD,
+        to_status=next_status,
+        process_step="INSPECT",
+        equipment_id=inspection.equipment_id,
+        occurred_at=now,
+    )
+    db.commit()
+    db.refresh(lot)
+    return lot
+
+
+@app.post("/lots/{lot_id}/rework-release", response_model=LotOut)
+def release_rework(
+    lot_id: int,
+    body: ReworkReleaseCreate,
+    db: Session = Depends(get_db),
+):
+    lot = db.get(Lot, lot_id)
+    if not lot:
+        raise HTTPException(404, "lot not found")
+    if lot.status != LotStatus.REWORK:
+        raise HTTPException(409, f"lot is {lot.status}, cannot release rework")
+    now = datetime.utcnow()
+    ensure_lot_transition(LotStatus.REWORK, LotStatus.WAITING)
+    transitioned = _compare_and_set_lot(
+        db,
+        lot,
+        expected_status=LotStatus.REWORK,
+        expected_step_index=lot.step_index,
+        expected_updated_at=lot.updated_at,
+        values={
+            "status": LotStatus.WAITING,
+            "step_index": body.step_index,
+            "updated_at": now,
+        },
+    )
+    if not transitioned:
+        _raise_lot_conflict(lot_id)
+    _append_lot_event(
+        db,
+        lot,
+        LotEventType.LOT_REWORK_RELEASED,
+        from_status=LotStatus.REWORK,
+        to_status=LotStatus.WAITING,
+        process_step=PROCESS_ROUTE[body.step_index],
+        occurred_at=now,
+    )
+    db.commit()
+    db.refresh(lot)
+    return lot
+
+
+@app.get("/quality/metrics", response_model=QualityMetricsOut)
+def quality_metrics(db: Session = Depends(get_db)):
+    total = db.query(QualityInspection).count()
+    passed = db.query(QualityInspection).filter(QualityInspection.result == InspectionResult.PASS).count()
+    failed = total - passed
+    inspected_lots = db.query(func.count(func.distinct(QualityInspection.lot_id))).scalar() or 0
+    first_pass = db.query(QualityInspection).filter(
+        QualityInspection.attempt_number == 1,
+        QualityInspection.result == InspectionResult.PASS,
+    ).count()
+    scrap_count = db.query(QualityInspection).filter(
+        QualityInspection.disposition == QualityDisposition.SCRAP
+    ).count()
+    rework_count = db.query(QualityInspection).filter(
+        QualityInspection.disposition == QualityDisposition.REWORK
+    ).count()
+    process_rows = (
+        db.query(QualityInspection.process_step, func.count(QualityInspection.id))
+        .filter(QualityInspection.result == InspectionResult.FAIL)
+        .group_by(QualityInspection.process_step)
+        .all()
+    )
+    equipment_rows = (
+        db.query(Equipment.name, func.count(QualityInspection.id))
+        .join(QualityInspection, QualityInspection.equipment_id == Equipment.id)
+        .filter(QualityInspection.result == InspectionResult.FAIL)
+        .group_by(Equipment.name)
+        .all()
+    )
+    return QualityMetricsOut(
+        total_inspections=total,
+        pass_count=passed,
+        fail_count=failed,
+        defect_rate=round(failed / total, 4) if total else 0.0,
+        first_pass_yield=round(first_pass / inspected_lots, 4) if inspected_lots else 1.0,
+        scrap_count=scrap_count,
+        rework_count=rework_count,
+        rework_rate=round(rework_count / inspected_lots, 4) if inspected_lots else 0.0,
+        defects_by_process=dict(process_rows),
+        defects_by_equipment=dict(equipment_rows),
+    )
+
+
+@app.get("/quality/anomalies", response_model=QualityAnomalyReportOut)
+def quality_anomalies(db: Session = Depends(get_db)):
+    """Detect equipment-correlated quality shifts using transparent peer statistics.
+
+    This deterministic baseline deliberately stays outside an LLM. An agent may
+    explain and investigate these results, but the underlying counts, rates and
+    thresholds remain reproducible from inspection records.
+    """
+    rows = (
+        db.query(
+            Equipment.id,
+            Equipment.name,
+            Equipment.process_step,
+            func.count(QualityInspection.id),
+            func.sum(
+                case((QualityInspection.result == InspectionResult.FAIL, 1), else_=0)
+            ),
+        )
+        .join(QualityInspection, QualityInspection.equipment_id == Equipment.id)
+        .group_by(Equipment.id, Equipment.name, Equipment.process_step)
+        .all()
+    )
+    samples = [
+        {
+            "equipment_id": equipment_id,
+            "equipment_name": equipment_name,
+            "process_step": process_step,
+            "total": int(total),
+            "failures": int(failures or 0),
+            "rate": (failures or 0) / total,
+        }
+        for equipment_id, equipment_name, process_step, total, failures in rows
+        if total >= ANOMALY_MIN_INSPECTIONS
+    ]
+
+    anomalies = []
+    for sample in samples:
+        peer_rates = [
+            peer["rate"]
+            for peer in samples
+            if peer["process_step"] == sample["process_step"]
+            and peer["equipment_id"] != sample["equipment_id"]
+        ]
+        if len(peer_rates) < 2:
+            continue
+        peer_mean = mean(peer_rates)
+        peer_stddev = pstdev(peer_rates)
+        rate_delta = sample["rate"] - peer_mean
+        z_score = rate_delta / peer_stddev if peer_stddev > 0 else None
+        exceeds_statistical_guard = (
+            z_score is not None and z_score >= ANOMALY_MIN_Z_SCORE
+        ) or (peer_stddev == 0 and rate_delta > 0)
+        if rate_delta < ANOMALY_MIN_RATE_DELTA or not exceeds_statistical_guard:
+            continue
+        severity = (
+            "CRITICAL"
+            if rate_delta >= 0.30
+            else "WARNING"
+            if rate_delta >= 0.15
+            else "WATCH"
+        )
+        anomalies.append(
+            EquipmentQualityAnomalyOut(
+                equipment_id=sample["equipment_id"],
+                equipment_name=sample["equipment_name"],
+                process_step=sample["process_step"],
+                total_inspections=sample["total"],
+                fail_count=sample["failures"],
+                defect_rate=round(sample["rate"], 4),
+                peer_mean_rate=round(peer_mean, 4),
+                peer_stddev=round(peer_stddev, 4),
+                z_score=round(z_score, 2) if z_score is not None else None,
+                rate_delta=round(rate_delta, 4),
+                severity=severity,
+            )
+        )
+
+    anomalies.sort(key=lambda item: item.rate_delta, reverse=True)
+    return QualityAnomalyReportOut(
+        generated_at=datetime.utcnow(),
+        method="same-process peer defect-rate comparison",
+        minimum_inspections=ANOMALY_MIN_INSPECTIONS,
+        minimum_rate_delta=ANOMALY_MIN_RATE_DELTA,
+        minimum_z_score=ANOMALY_MIN_Z_SCORE,
+        anomalies=anomalies,
+    )
+
+
 @app.get("/metrics", response_model=MetricsOut)
 def metrics(db: Session = Depends(get_db)):
-    wip_count = db.query(Lot).filter(Lot.status.in_([LotStatus.WAITING, LotStatus.PROCESSING])).count()
+    wip_count = db.query(Lot).filter(
+        Lot.status.in_(
+            [LotStatus.WAITING, LotStatus.PROCESSING, LotStatus.HOLD, LotStatus.QUALITY_HOLD, LotStatus.REWORK]
+        )
+    ).count()
 
     today_start = kst_midnight_utc(datetime.utcnow())
     completed_today_q = db.query(Lot).filter(
@@ -516,8 +907,9 @@ def metrics(db: Session = Depends(get_db)):
     )
     completed_today = completed_today_q.count()
     scrap_count = db.query(Lot).filter(Lot.is_scrap == 1).count()
-    total_lots = db.query(Lot).count()
-    yield_rate = 1.0 - (scrap_count / total_lots) if total_lots else 1.0
+    total_completed = db.query(Lot).filter(Lot.status == LotStatus.DONE).count()
+    completed_outcomes = total_completed + scrap_count
+    yield_rate = total_completed / completed_outcomes if completed_outcomes else 1.0
 
     avg_cycle = (
         db.query(func.avg(func.strftime("%s", Lot.completed_at) - func.strftime("%s", Lot.created_at)))

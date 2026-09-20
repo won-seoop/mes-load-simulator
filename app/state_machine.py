@@ -3,8 +3,19 @@ from app.models import LotStatus
 
 ALLOWED_LOT_TRANSITIONS = {
     LotStatus.WAITING: {LotStatus.PROCESSING, LotStatus.HOLD},
-    LotStatus.PROCESSING: {LotStatus.PROCESSING, LotStatus.HOLD, LotStatus.DONE},
+    LotStatus.PROCESSING: {
+        LotStatus.PROCESSING,
+        LotStatus.HOLD,
+        LotStatus.QUALITY_HOLD,
+    },
     LotStatus.HOLD: {LotStatus.PROCESSING},
+    LotStatus.QUALITY_HOLD: {
+        LotStatus.DONE,
+        LotStatus.REWORK,
+        LotStatus.SCRAPPED,
+    },
+    LotStatus.REWORK: {LotStatus.WAITING},
+    LotStatus.SCRAPPED: set(),
     LotStatus.DONE: set(),
 }
 

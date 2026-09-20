@@ -1,0 +1,14 @@
+experiment_id: EXP-005
+users: 50
+spawn_rate_per_second: 5
+duration: 3m
+database: SQLite
+dispatch_key:
+  - dispatch_count
+  - effective_run_seconds
+  - equipment_id
+anomaly_detector:
+  minimum_inspections: 10
+  minimum_rate_delta: 0.10
+  minimum_z_score: 2.0
+  peer_group: same_process

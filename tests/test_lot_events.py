@@ -39,6 +39,8 @@ def test_full_route_records_ordered_process_and_completion_events(client):
     for _ in PROCESS_ROUTE:
         response = client.post(f"/lots/{lot['id']}/advance")
         assert response.status_code == 200
+    passed = client.post(f"/lots/{lot['id']}/inspections", json={"result": "PASS"})
+    assert passed.status_code == 200
 
     events = _events(client, lot["id"])
 
@@ -54,7 +56,9 @@ def test_full_route_records_ordered_process_and_completion_events(client):
     process_events = [event for event in events if event["event_type"] == "PROCESS_COMPLETED"]
     assert [event["process_step"] for event in process_events] == PROCESS_ROUTE
     assert all(event["equipment_id"] is not None for event in process_events)
-    assert process_events[-1]["to_status"] == "DONE"
+    assert process_events[-1]["to_status"] == "QUALITY_HOLD"
+    assert events[-1]["from_status"] == "QUALITY_HOLD"
+    assert events[-1]["to_status"] == "DONE"
 
 
 def test_hold_is_not_duplicated_and_recovery_is_traced(client):

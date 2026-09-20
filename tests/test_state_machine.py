@@ -11,8 +11,12 @@ from app.state_machine import ensure_lot_transition
         (LotStatus.WAITING, LotStatus.HOLD),
         (LotStatus.PROCESSING, LotStatus.PROCESSING),
         (LotStatus.PROCESSING, LotStatus.HOLD),
-        (LotStatus.PROCESSING, LotStatus.DONE),
+        (LotStatus.PROCESSING, LotStatus.QUALITY_HOLD),
         (LotStatus.HOLD, LotStatus.PROCESSING),
+        (LotStatus.QUALITY_HOLD, LotStatus.DONE),
+        (LotStatus.QUALITY_HOLD, LotStatus.REWORK),
+        (LotStatus.QUALITY_HOLD, LotStatus.SCRAPPED),
+        (LotStatus.REWORK, LotStatus.WAITING),
     ],
 )
 def test_allowed_lot_transitions(from_status, to_status):
@@ -24,6 +28,10 @@ def test_allowed_lot_transitions(from_status, to_status):
     [
         (LotStatus.WAITING, LotStatus.DONE),
         (LotStatus.HOLD, LotStatus.DONE),
+        (LotStatus.PROCESSING, LotStatus.DONE),
+        (LotStatus.QUALITY_HOLD, LotStatus.PROCESSING),
+        (LotStatus.REWORK, LotStatus.DONE),
+        (LotStatus.SCRAPPED, LotStatus.PROCESSING),
         (LotStatus.DONE, LotStatus.PROCESSING),
         (LotStatus.DONE, LotStatus.HOLD),
     ],

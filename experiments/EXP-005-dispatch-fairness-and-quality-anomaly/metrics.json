@@ -1,0 +1,32 @@
+{
+  "run_id": "2026-09-20-exp005",
+  "load_test": {
+    "requests": 17982,
+    "failure_rate": 0.0,
+    "rps": 100.53,
+    "p95_ms": 150,
+    "p99_ms": 370,
+    "expected_conflicts": 103,
+    "server_5xx": 0,
+    "integrity_errors": 0
+  },
+  "before_inspection_distribution": {
+    "INSPECT-01": 1,
+    "INSPECT-02": 1,
+    "INSPECT-03": 268
+  },
+  "after_inspection_distribution": {
+    "INSPECT-01": 79,
+    "INSPECT-02": 80,
+    "INSPECT-03": 79
+  },
+  "quality": {
+    "total_inspections": 238,
+    "first_pass_yield": 0.9106,
+    "defect_rate": 0.0924,
+    "INSPECT-03_failures": 22,
+    "INSPECT-03_defect_rate": 0.2785,
+    "peer_mean_rate": 0.0,
+    "detected_severity": "WARNING"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "before_policy": {
+    "run_id": "2026-09-20-exp004",
+    "requests": 17553,
+    "failure_rate": 0.0,
+    "p95_ms": 170,
+    "p99_ms": 710,
+    "server_5xx": 0,
+    "integrity_errors": 0,
+    "total_inspections": 273,
+    "rework_count": 85,
+    "scrap_count": 0,
+    "maximum_inspection_attempt": 4,
+    "third_or_later_inspections": 5
+  },
+  "after_policy": {
+    "run_id": "2026-09-20-exp004-after",
+    "requests": 18050,
+    "failure_rate": 0.0,
+    "p95_ms": 180,
+    "p99_ms": 570,
+    "server_5xx": 0,
+    "integrity_errors": 0,
+    "total_inspections": 270,
+    "rework_count": 71,
+    "scrap_count": 10,
+    "maximum_inspection_attempt": 2,
+    "third_or_later_inspections": 0
+  }
+}

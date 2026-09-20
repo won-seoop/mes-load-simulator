@@ -21,6 +21,9 @@ class LotStatus(str, enum.Enum):
     PROCESSING = "PROCESSING"
     DONE = "DONE"
     HOLD = "HOLD"
+    QUALITY_HOLD = "QUALITY_HOLD"
+    REWORK = "REWORK"
+    SCRAPPED = "SCRAPPED"
 
 
 class LotEventType(str, enum.Enum):
@@ -29,6 +32,22 @@ class LotEventType(str, enum.Enum):
     LOT_RELEASED_FROM_HOLD = "LOT_RELEASED_FROM_HOLD"
     PROCESS_COMPLETED = "PROCESS_COMPLETED"
     LOT_COMPLETED = "LOT_COMPLETED"
+    DEFECT_RECORDED = "DEFECT_RECORDED"
+    LOT_SCRAPPED = "LOT_SCRAPPED"
+    LOT_REWORKED = "LOT_REWORKED"
+    LOT_REWORK_RELEASED = "LOT_REWORK_RELEASED"
+
+
+class InspectionResult(str, enum.Enum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
+class QualityDisposition(str, enum.Enum):
+    NONE = "NONE"
+    PENDING = "PENDING"
+    SCRAP = "SCRAP"
+    REWORK = "REWORK"
 
 
 class WorkOrderStatus(str, enum.Enum):
@@ -76,6 +95,7 @@ class Equipment(Base):
     process_step = Column(String, index=True)
     status = Column(Enum(EquipmentStatus), default=EquipmentStatus.IDLE)
     run_seconds: Mapped[float] = Column(Float, default=0.0)
+    dispatch_count = Column(Integer, nullable=False, default=0)
     last_status_change = Column(DateTime, default=datetime.utcnow)
 
 
@@ -126,3 +146,23 @@ class WorkOrderLot(Base):
     work_order_id = Column(Integer, ForeignKey("work_orders.id"), nullable=False, index=True)
     lot_id = Column(Integer, ForeignKey("lots.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class QualityInspection(Base):
+    __tablename__ = "quality_inspections"
+    __table_args__ = (
+        UniqueConstraint("lot_id", "attempt_number", name="uq_quality_lot_attempt"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    inspection_id = Column(String, unique=True, index=True, default=lambda: str(uuid4()))
+    lot_id = Column(Integer, ForeignKey("lots.id"), nullable=False, index=True)
+    attempt_number = Column(Integer, nullable=False)
+    process_step = Column(String, nullable=False, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=True, index=True)
+    result = Column(Enum(InspectionResult), nullable=False, index=True)
+    defect_code = Column(String, nullable=True, index=True)
+    disposition = Column(
+        Enum(QualityDisposition), nullable=False, default=QualityDisposition.NONE, index=True
+    )
+    inspected_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)

@@ -1,0 +1,11 @@
+experiment_id: EXP-004
+users: 50
+spawn_rate_per_second: 5
+duration: 3m
+database: SQLite
+quality_fault:
+  defect_code: INSPECT_SENSOR_DRIFT
+  correlated_equipment: INSPECT-03
+quality_policy:
+  maximum_rework_cycles: 1
+  repeated_failure_disposition: SCRAP_REQUIRED

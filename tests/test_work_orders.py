@@ -153,6 +153,10 @@ def test_work_order_completes_when_all_planned_lots_complete(client):
     for _ in PROCESS_ROUTE:
         response = client.post(f"/lots/{lot['id']}/advance")
         assert response.status_code == 200
+    inspection = client.post(
+        f"/lots/{lot['id']}/inspections", json={"result": "PASS"}
+    )
+    assert inspection.status_code == 200
 
     current = client.get(f"/work-orders/{work_order['id']}").json()
     assert current["completed_quantity"] == 20
