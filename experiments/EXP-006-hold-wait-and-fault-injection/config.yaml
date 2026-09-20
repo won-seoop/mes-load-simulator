@@ -1,0 +1,15 @@
+experiment_id: EXP-006
+users: 50
+spawn_rate_per_second: 5
+duration: 3m
+database: SQLite
+fault_injection:
+  run_1_fault_down_probability: 1.0  # no gate; documented failure case
+  run_2_fault_down_probability: 0.05  # adopted
+  fault_down_task_weight: 1
+  fault_recover_task_weight: 1
+hold_wait_metric:
+  source_events:
+    - LOT_HELD
+    - LOT_RELEASED_FROM_HOLD
+  metrics_sampler_interval_seconds: 10

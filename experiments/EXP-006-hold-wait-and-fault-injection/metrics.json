@@ -1,0 +1,66 @@
+{
+  "run_1_no_gate_failure_case": {
+    "load_test": {
+      "requests": 17854,
+      "failure_rate": 0.0,
+      "rps": 99.18,
+      "p95_ms": 260,
+      "p99_ms": 620,
+      "server_5xx": 0,
+      "integrity_errors": 0
+    },
+    "equipment_status_changes": {
+      "down": 579,
+      "recover": 568
+    },
+    "mes_metrics": {
+      "wip_count": 2255,
+      "completed_today": 149,
+      "lots_on_hold_count": 702,
+      "longest_current_hold_seconds": 175.0,
+      "avg_resolved_hold_seconds": 0.6
+    }
+  },
+  "run_2_gated_0_05": {
+    "run_id": "2026-09-21",
+    "load_test": {
+      "requests": 17238,
+      "failure_rate": 0.0,
+      "rps": 96.04,
+      "p95_ms": 84,
+      "p99_ms": 230,
+      "server_5xx": 0,
+      "integrity_errors": 0
+    },
+    "equipment_status_changes": {
+      "down": 34,
+      "recover": 38
+    },
+    "mes_metrics": {
+      "wip_count": 2497,
+      "completed_today": 219,
+      "lots_on_hold_count": 0,
+      "longest_current_hold_seconds": null,
+      "avg_resolved_hold_seconds": null
+    }
+  },
+  "baseline_exp005_same_day": {
+    "wip_count": 2648,
+    "completed_today": 216
+  },
+  "pytest_frozen_time_verification": {
+    "baseline_no_hold": {
+      "lots_on_hold_count": 0,
+      "longest_current_hold_seconds": null,
+      "avg_resolved_hold_seconds": null
+    },
+    "current_hold_330s": {
+      "lots_on_hold_count": 1,
+      "longest_current_hold_seconds": 330.0
+    },
+    "resolved_hold_120s": {
+      "lots_on_hold_count": 0,
+      "avg_resolved_hold_seconds": 120.0
+    }
+  }
+}
