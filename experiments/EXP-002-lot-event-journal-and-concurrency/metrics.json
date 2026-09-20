@@ -1,0 +1,25 @@
+{
+  "baseline_source": "reports/2026-09-19.json",
+  "result_source": "reports/2026-09-20.json",
+  "workload": "Locust 50 VU, spawn 5/s, 3 minutes, random mixed tasks",
+  "baseline": {
+    "requests": 17980,
+    "failures": 28,
+    "http_500": 27,
+    "http_400": 1,
+    "rps": 100.19762230084845,
+    "p95_ms": 18.0,
+    "p99_ms": 57.0
+  },
+  "result": {
+    "requests": 17869,
+    "failures": 0,
+    "expected_state_conflicts_409": 34,
+    "server_5xx": 0,
+    "integrity_errors": 0,
+    "rps": 99.50391925500807,
+    "p95_ms": 24.0,
+    "p99_ms": 49.0
+  }
+}
+

@@ -1,0 +1,17 @@
+runtime:
+  framework: fastapi
+  instances: 1
+database:
+  engine: sqlite
+load_test:
+  tool: locust
+  users: 50
+  spawn_rate_per_second: 5
+  duration: 3m
+process_route:
+  - ETCH
+  - CVD
+  - CMP
+  - INSPECT
+equipment_per_step: 3
+

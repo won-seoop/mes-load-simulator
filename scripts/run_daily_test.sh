@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 # between KST 00:00-08:59 with the previous KST day (see ROADMAP.md).
 RUN_DATE=$(TZ=Asia/Seoul date +%Y-%m-%d)
 RAW_DIR="reports/raw/${RUN_DATE}"
+LOAD_PORT="${MES_LOAD_TEST_PORT:-18080}"
+LOAD_HOST="http://127.0.0.1:${LOAD_PORT}"
 mkdir -p "$RAW_DIR"
 
 rm -f mes.db
@@ -14,23 +16,39 @@ source .venv/bin/activate
 pip install -q -r requirements.txt
 
 echo "Running test suite before load test..."
-pytest tests/ -v
+python -m pytest tests/ -v
 
-uvicorn app.main:app --host 0.0.0.0 --port 8000 > "$RAW_DIR/server.log" 2>&1 &
+if lsof -nP -iTCP:"$LOAD_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "load-test port $LOAD_PORT is already in use" >&2
+  exit 1
+fi
+
+uvicorn app.main:app --host 127.0.0.1 --port "$LOAD_PORT" > "$RAW_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
 
+SERVER_READY=0
 for i in $(seq 1 20); do
-  if curl -sf http://localhost:8000/health > /dev/null; then
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "load-test server exited before becoming ready" >&2
+    cat "$RAW_DIR/server.log" >&2
+    exit 1
+  fi
+  if curl -sf "$LOAD_HOST/health" > /dev/null; then
+    SERVER_READY=1
     break
   fi
   sleep 0.5
 done
+if [ "$SERVER_READY" -ne 1 ]; then
+  echo "load-test server did not become ready at $LOAD_HOST" >&2
+  exit 1
+fi
 
 set +e
 locust -f load_test/locustfile.py --headless \
   -u 50 -r 5 -t 3m \
-  --host http://localhost:8000 \
+  --host "$LOAD_HOST" \
   --csv "$RAW_DIR/locust" \
   --only-summary
 LOCUST_EXIT=$?
@@ -43,7 +61,7 @@ if [ "$LOCUST_EXIT" -gt 1 ]; then
   exit "$LOCUST_EXIT"
 fi
 
-curl -s http://localhost:8000/metrics -o "$RAW_DIR/mes_metrics.json"
+curl -s "$LOAD_HOST/metrics" -o "$RAW_DIR/mes_metrics.json"
 
 kill "$SERVER_PID" 2>/dev/null || true
 trap - EXIT

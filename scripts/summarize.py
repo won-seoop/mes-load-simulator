@@ -1,5 +1,6 @@
 import csv
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -12,6 +13,12 @@ def load_locust_stats(raw_dir: Path) -> dict:
     total = next((r for r in rows if r["Name"] == "Aggregated"), None)
     if not total:
         return {}
+    conflict = next(
+        (r for r in rows if r["Name"] == "/lots/[id]/advance [conflict]"),
+        None,
+    )
+    server_log = raw_dir / "server.log"
+    server_log_text = server_log.read_text() if server_log.exists() else ""
     return {
         "requests": int(total["Request Count"]),
         "failures": int(total["Failure Count"]),
@@ -20,6 +27,9 @@ def load_locust_stats(raw_dir: Path) -> dict:
         "p95_ms": float(total["95%"]),
         "p99_ms": float(total["99%"]),
         "avg_ms": float(total["Average Response Time"]),
+        "business_conflicts": int(conflict["Request Count"]) if conflict else 0,
+        "server_5xx": len(re.findall(r'HTTP/1\.1 5\d\d ', server_log_text)),
+        "integrity_errors": server_log_text.count("IntegrityError"),
     }
 
 
@@ -45,6 +55,9 @@ def main():
         md.append(f"- RPS: {load_stats['rps']:.2f}")
         md.append(f"- p95 latency: {load_stats['p95_ms']:.0f} ms")
         md.append(f"- p99 latency: {load_stats['p99_ms']:.0f} ms")
+        md.append(f"- Expected state conflicts (409): {load_stats['business_conflicts']}")
+        md.append(f"- Server 5xx: {load_stats['server_5xx']}")
+        md.append(f"- Integrity errors: {load_stats['integrity_errors']}")
     else:
         md.append("- (no data)")
 

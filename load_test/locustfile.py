@@ -29,7 +29,16 @@ class MesUser(HttpUser):
         if not lots:
             return
         lot = random.choice(lots)
-        self.client.post(f"/lots/{lot['id']}/advance", name="/lots/[id]/advance")
+        with self.client.post(
+            f"/lots/{lot['id']}/advance",
+            name="/lots/[id]/advance",
+            catch_response=True,
+        ) as advance:
+            if advance.status_code == 409:
+                # Another worker advanced the same snapshot first. This is an
+                # expected optimistic-concurrency result, not a server error.
+                advance.request_meta["name"] = "/lots/[id]/advance [conflict]"
+                advance.success()
 
     @task(2)
     def list_equipment(self):

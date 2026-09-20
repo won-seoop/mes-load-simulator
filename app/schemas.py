@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from app.models import EquipmentStatus, LotStatus
+from app.models import EquipmentStatus, LotEventType, LotStatus
 
 
 class EquipmentOut(BaseModel):
@@ -36,6 +36,21 @@ class LotOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class LotEventOut(BaseModel):
+    event_id: str
+    lot_id: int
+    sequence_number: int
+    event_type: LotEventType
+    process_step: Optional[str]
+    equipment_id: Optional[int]
+    from_status: Optional[LotStatus]
+    to_status: LotStatus
+    occurred_at: datetime
 
     class Config:
         from_attributes = True

@@ -2,15 +2,24 @@ import random
 from datetime import datetime, timedelta
 
 from fastapi import Depends, FastAPI, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from app.database import Base, SessionLocal, engine, get_db
-from app.models import PROCESS_ROUTE, Equipment, EquipmentStatus, Lot, LotStatus
+from app.models import (
+    PROCESS_ROUTE,
+    Equipment,
+    EquipmentStatus,
+    Lot,
+    LotEvent,
+    LotEventType,
+    LotStatus,
+)
 from app.schemas import (
     EquipmentOut,
     EquipmentStatusUpdate,
     LotCreate,
+    LotEventOut,
     LotOut,
     MetricsOut,
 )
@@ -23,6 +32,41 @@ app = FastAPI(title="MES Simulator", version="0.1.0")
 SCRAP_PROBABILITY = 0.03
 
 
+def _append_lot_event(
+    db: Session,
+    lot: Lot,
+    event_type: LotEventType,
+    *,
+    to_status: LotStatus,
+    from_status: LotStatus | None = None,
+    process_step: str | None = None,
+    equipment_id: int | None = None,
+    occurred_at: datetime | None = None,
+) -> LotEvent:
+    """Append the next immutable event for a lot inside the caller's transaction."""
+    last_sequence = (
+        db.query(func.max(LotEvent.sequence_number))
+        .filter(LotEvent.lot_id == lot.id)
+        .scalar()
+        or 0
+    )
+    event = LotEvent(
+        lot_id=lot.id,
+        sequence_number=last_sequence + 1,
+        event_type=event_type,
+        process_step=process_step,
+        equipment_id=equipment_id,
+        from_status=from_status,
+        to_status=to_status,
+        occurred_at=occurred_at or datetime.utcnow(),
+    )
+    db.add(event)
+    # SessionLocal uses autoflush=False. Flush here so another event appended
+    # in the same transaction observes this sequence number.
+    db.flush()
+    return event
+
+
 def _effective_run_seconds(eq: Equipment, now: datetime) -> float:
     """run_seconds plus any time accrued in the current RUN stretch that
     hasn't been flushed into run_seconds yet (that only happens on the next
@@ -30,6 +74,45 @@ def _effective_run_seconds(eq: Equipment, now: datetime) -> float:
     if eq.status == EquipmentStatus.RUN:
         return eq.run_seconds + (now - eq.last_status_change).total_seconds()
     return eq.run_seconds
+
+
+def _compare_and_set_lot(
+    db: Session,
+    lot: Lot,
+    *,
+    expected_status: LotStatus,
+    expected_step_index: int,
+    values: dict,
+) -> bool:
+    """Apply one lot transition only if its observed state is still current.
+
+    SQLite serializes concurrent writers. Once the first request commits, a
+    competing request's conditional UPDATE matches zero rows and becomes a
+    business conflict instead of advancing the same lot twice.
+    """
+    result = db.execute(
+        update(Lot)
+        .where(
+            Lot.id == lot.id,
+            Lot.status == expected_status,
+            Lot.step_index == expected_step_index,
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount != 1:
+        db.rollback()
+        return False
+    db.expire(lot)
+    db.refresh(lot)
+    return True
+
+
+def _raise_lot_conflict(lot_id: int) -> None:
+    raise HTTPException(
+        409,
+        f"lot {lot_id} changed concurrently; reload its current state and retry",
+    )
 
 
 @app.on_event("startup")
@@ -82,6 +165,14 @@ def set_equipment_status(
 def create_lot(body: LotCreate, db: Session = Depends(get_db)):
     lot = Lot(product=body.product, quantity=body.quantity, status=LotStatus.WAITING)
     db.add(lot)
+    db.flush()
+    _append_lot_event(
+        db,
+        lot,
+        LotEventType.LOT_CREATED,
+        to_status=LotStatus.WAITING,
+        occurred_at=lot.created_at,
+    )
     db.commit()
     db.refresh(lot)
     return lot
@@ -103,16 +194,29 @@ def get_lot(lot_id: int, db: Session = Depends(get_db)):
     return lot
 
 
+@app.get("/lots/{lot_id}/events", response_model=list[LotEventOut])
+def list_lot_events(lot_id: int, db: Session = Depends(get_db)):
+    if not db.get(Lot, lot_id):
+        raise HTTPException(404, "lot not found")
+    return (
+        db.query(LotEvent)
+        .filter(LotEvent.lot_id == lot_id)
+        .order_by(LotEvent.sequence_number)
+        .all()
+    )
+
+
 @app.post("/lots/{lot_id}/advance", response_model=LotOut)
 def advance_lot(lot_id: int, db: Session = Depends(get_db)):
     lot = db.get(Lot, lot_id)
     if not lot:
         raise HTTPException(404, "lot not found")
     if lot.status == LotStatus.DONE:
-        raise HTTPException(400, f"lot is {lot.status}, cannot advance")
+        raise HTTPException(409, f"lot is {lot.status}, cannot advance")
     # A HOLD lot is retried at its current step once equipment frees up,
     # rather than being stuck forever (equipment down is a transient state).
 
+    previous_status = lot.status
     step = PROCESS_ROUTE[lot.step_index]
     now = datetime.utcnow()
     candidates = (
@@ -124,7 +228,25 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
     # always the same one) so parallel equipment capacity is actually used.
     eq = min(candidates, key=lambda e: _effective_run_seconds(e, now), default=None)
     if not eq:
-        lot.status = LotStatus.HOLD
+        if previous_status != LotStatus.HOLD:
+            transitioned = _compare_and_set_lot(
+                db,
+                lot,
+                expected_status=previous_status,
+                expected_step_index=lot.step_index,
+                values={"status": LotStatus.HOLD, "updated_at": now},
+            )
+            if not transitioned:
+                _raise_lot_conflict(lot_id)
+            _append_lot_event(
+                db,
+                lot,
+                LotEventType.LOT_HELD,
+                from_status=previous_status,
+                to_status=LotStatus.HOLD,
+                process_step=step,
+                occurred_at=now,
+            )
         db.commit()
         db.refresh(lot)
         return lot
@@ -134,16 +256,69 @@ def advance_lot(lot_id: int, db: Session = Depends(get_db)):
     eq.status = EquipmentStatus.RUN
     eq.last_status_change = now
 
-    if random.random() < SCRAP_PROBABILITY:
-        lot.is_scrap = 1
+    expected_step_index = lot.step_index
+    next_step_index = expected_step_index + 1
+    next_status = (
+        LotStatus.DONE
+        if next_step_index >= len(PROCESS_ROUTE)
+        else LotStatus.PROCESSING
+    )
+    next_is_scrap = 1 if lot.is_scrap or random.random() < SCRAP_PROBABILITY else 0
+    transition_values = {
+        "step_index": next_step_index,
+        "status": next_status,
+        "is_scrap": next_is_scrap,
+        "updated_at": now,
+    }
+    if next_status == LotStatus.DONE:
+        transition_values["completed_at"] = now
 
-    lot.step_index += 1
-    lot.status = LotStatus.PROCESSING
-    lot.updated_at = now
+    transitioned = _compare_and_set_lot(
+        db,
+        lot,
+        expected_status=previous_status,
+        expected_step_index=expected_step_index,
+        values=transition_values,
+    )
+    if not transitioned:
+        _raise_lot_conflict(lot_id)
 
-    if lot.step_index >= len(PROCESS_ROUTE):
-        lot.status = LotStatus.DONE
-        lot.completed_at = now
+    if previous_status == LotStatus.HOLD:
+        _append_lot_event(
+            db,
+            lot,
+            LotEventType.LOT_RELEASED_FROM_HOLD,
+            from_status=LotStatus.HOLD,
+            to_status=LotStatus.PROCESSING,
+            process_step=step,
+            equipment_id=eq.id,
+            occurred_at=now,
+        )
+
+    process_from_status = (
+        LotStatus.PROCESSING if previous_status == LotStatus.HOLD else previous_status
+    )
+    _append_lot_event(
+        db,
+        lot,
+        LotEventType.PROCESS_COMPLETED,
+        from_status=process_from_status,
+        to_status=lot.status,
+        process_step=step,
+        equipment_id=eq.id,
+        occurred_at=now,
+    )
+    if lot.status == LotStatus.DONE:
+        _append_lot_event(
+            db,
+            lot,
+            LotEventType.LOT_COMPLETED,
+            from_status=LotStatus.DONE,
+            to_status=LotStatus.DONE,
+            process_step=step,
+            equipment_id=eq.id,
+            occurred_at=now,
+        )
 
     db.commit()
     db.refresh(lot)

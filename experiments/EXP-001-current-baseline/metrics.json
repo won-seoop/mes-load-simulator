@@ -1,0 +1,13 @@
+{
+  "source": "reports/2026-09-19.json",
+  "commit": "4eb3a36906b4915239fd9d6afa881103580df051",
+  "http_requests": 17810,
+  "http_failure_rate": 0.0,
+  "rps": 99.36297821799575,
+  "p95_ms": 35.0,
+  "p99_ms": 74.0,
+  "completed_lots": 318,
+  "wip": 2544,
+  "yield_rate": 0.9382,
+  "avg_cycle_time_seconds": 12.6
+}

@@ -1,0 +1,23 @@
+runtime:
+  framework: fastapi
+  instances: 1
+database:
+  engine: sqlite
+load_test:
+  tool: locust
+  users: 50
+  spawn_rate_per_second: 5
+  duration: 3m
+  tasks:
+    - create_lot
+    - advance_lot
+    - list_equipment
+    - metrics
+concurrency_control:
+  strategy: conditional_update
+  match_fields:
+    - lot_id
+    - status
+    - step_index
+  conflict_http_status: 409
+

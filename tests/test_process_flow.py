@@ -107,7 +107,7 @@ def test_cannot_advance_a_done_lot(client):
     assert lot["status"] == "DONE"
 
     resp = client.post(f"/lots/{lot['id']}/advance")
-    assert resp.status_code == 400
+    assert resp.status_code == 409
 
 
 def test_advance_nonexistent_lot(client):
