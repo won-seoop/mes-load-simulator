@@ -1,0 +1,159 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:FactoryFlow.Operator.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:models="using:FactoryFlow.Operator.Models"
+        mc:Ignorable="d" d:DesignWidth="1440" d:DesignHeight="900"
+        x:Class="FactoryFlow.Operator.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Width="1440" Height="900" MinWidth="1180" MinHeight="720"
+        Title="FactoryFlow MES · Operator Console">
+
+    <Design.DataContext>
+        <!-- This only sets the DataContext for the previewer in an IDE,
+             to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
+        <vm:MainViewModel />
+    </Design.DataContext>
+
+    <Grid ColumnDefinitions="220,*">
+        <Border Grid.Column="0" Background="#0E1526" BorderBrush="#25304A" BorderThickness="0,0,1,0">
+            <Grid RowDefinitions="Auto,*,Auto" Margin="18,24">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="FACTORYFLOW" FontSize="19" FontWeight="Bold" Foreground="#F4F7FB" />
+                    <TextBlock Text="MES LAB" FontSize="11" Foreground="#6EA8FE" LetterSpacing="2" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Margin="0,34,0,0" Spacing="7">
+                    <Border Background="#1C2A49" CornerRadius="7" Padding="12,10">
+                        <TextBlock Text="▦  Operations Overview" Foreground="#8DB8FF" FontWeight="SemiBold" />
+                    </Border>
+                    <TextBlock Text="▤  Work Orders" Padding="12,10" Foreground="#AEB7C7" />
+                    <TextBlock Text="◫  WIP / Lot Trace" Padding="12,10" Foreground="#AEB7C7" />
+                    <TextBlock Text="⚙  Equipment" Padding="12,10" Foreground="#AEB7C7" />
+                    <TextBlock Text="◇  Quality" Padding="12,10" Foreground="#AEB7C7" />
+                    <TextBlock Text="△  Anomaly Center" Padding="12,10" Foreground="#AEB7C7" />
+                    <Border Height="1" Background="#25304A" Margin="0,12" />
+                    <TextBlock Text="AGENT INFRA" FontSize="10" Foreground="#667085" LetterSpacing="1.5" Margin="12,0" />
+                    <TextBlock Text="⌁  MCP Resources" Padding="12,10" Foreground="#778196" />
+                    <TextBlock Text="◎  A2A Tasks" Padding="12,10" Foreground="#778196" />
+                </StackPanel>
+
+                <Border Grid.Row="2" Classes="card" Padding="12">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="MES API" FontSize="11" Classes="muted" />
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <Ellipse Width="8" Height="8" Fill="{Binding ConnectionColor}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding ConnectionStatus}" Foreground="{Binding ConnectionColor}" FontWeight="Bold" FontSize="12" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Column="1">
+            <StackPanel Margin="28,22,28,34" Spacing="18">
+                <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel>
+                        <TextBlock Text="Operations Overview" FontSize="25" FontWeight="Bold" Foreground="#F4F7FB" />
+                        <TextBlock Text="Real-time work execution, WIP, equipment and quality visibility" Classes="muted" Margin="0,5,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                        <TextBlock Text="Updated" Classes="muted" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding LastUpdated}" Foreground="#CBD2DF" VerticalAlignment="Center" />
+                        <Button Classes="primary" Content="↻ Refresh" Command="{Binding RefreshCommand}" />
+                    </StackPanel>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,*,*,*,*,*" ColumnSpacing="12">
+                    <Border Grid.Column="0" Classes="card"><StackPanel Spacing="8"><TextBlock Text="WIP" Classes="muted"/><TextBlock Text="{Binding Wip}" FontSize="27" FontWeight="Bold"/><TextBlock Text="Active lots" FontSize="11" Foreground="#6EA8FE"/></StackPanel></Border>
+                    <Border Grid.Column="1" Classes="card"><StackPanel Spacing="8"><TextBlock Text="COMPLETED" Classes="muted"/><TextBlock Text="{Binding Completed}" FontSize="27" FontWeight="Bold"/><TextBlock Text="Today (KST)" FontSize="11" Foreground="#33D17A"/></StackPanel></Border>
+                    <Border Grid.Column="2" Classes="card"><StackPanel Spacing="8"><TextBlock Text="YIELD" Classes="muted"/><TextBlock Text="{Binding Yield}" FontSize="27" FontWeight="Bold"/><TextBlock Text="Good / disposed" FontSize="11" Foreground="#33D17A"/></StackPanel></Border>
+                    <Border Grid.Column="3" Classes="card"><StackPanel Spacing="8"><TextBlock Text="THROUGHPUT" Classes="muted"/><TextBlock Text="{Binding Throughput}" FontSize="27" FontWeight="Bold"/><TextBlock Text="Completed lots" FontSize="11" Foreground="#9B8AFB"/></StackPanel></Border>
+                    <Border Grid.Column="4" Classes="card"><StackPanel Spacing="8"><TextBlock Text="FPY" Classes="muted"/><TextBlock Text="{Binding FirstPassYield}" FontSize="27" FontWeight="Bold"/><TextBlock Text="First inspection" FontSize="11" Foreground="#36C5B3"/></StackPanel></Border>
+                    <Border Grid.Column="5" Classes="card"><StackPanel Spacing="8"><TextBlock Text="DEFECT" Classes="muted"/><TextBlock Text="{Binding DefectRate}" FontSize="27" FontWeight="Bold"/><TextBlock Text="All inspections" FontSize="11" Foreground="#FF8A65"/></StackPanel></Border>
+                </Grid>
+
+                <Grid ColumnDefinitions="1.35*,1*" ColumnSpacing="18">
+                    <Border Grid.Column="0" Classes="card">
+                        <StackPanel Spacing="14">
+                            <Grid ColumnDefinitions="*,Auto"><TextBlock Text="WIP by process" Classes="sectionTitle"/><TextBlock Grid.Column="1" Text="Route: ETCH → CVD → CMP → INSPECT" Classes="muted" FontSize="11"/></Grid>
+                            <ItemsControl ItemsSource="{Binding Stages}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Rows="1"/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:StageRow">
+                                        <Border Margin="0,0,8,0" Background="#0F1729" BorderBrush="{Binding Accent}" BorderThickness="0,3,0,0" CornerRadius="6" Padding="12">
+                                            <StackPanel Spacing="8"><TextBlock Text="{Binding Name}" Classes="muted" FontSize="11"/><TextBlock Text="{Binding Count}" FontSize="24" FontWeight="Bold"/></StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Classes="card">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="Quality anomaly signal" Classes="sectionTitle"/>
+                            <TextBlock Text="{Binding QualitySignal}" TextWrapping="Wrap" Foreground="#F4F7FB"/>
+                            <ItemsControl ItemsSource="{Binding Defects}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:DefectRow">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,6">
+                                            <TextBlock Text="{Binding Equipment}"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Count}" FontWeight="Bold" Margin="12,0"/>
+                                            <Border Grid.Column="2" Background="#202B42" CornerRadius="10" Padding="8,3"><TextBlock Text="{Binding Severity}" Foreground="{Binding Color}" FontSize="10" FontWeight="Bold"/></Border>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <Grid ColumnDefinitions="1.15*,1*" ColumnSpacing="18">
+                    <Border Grid.Column="0" Classes="card">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="Equipment status" Classes="sectionTitle"/>
+                            <Grid ColumnDefinitions="1.2*,1*,.7*,.6*,.7*"><TextBlock Text="EQUIPMENT" Classes="muted" FontSize="10"/><TextBlock Grid.Column="1" Text="PROCESS" Classes="muted" FontSize="10"/><TextBlock Grid.Column="2" Text="STATUS" Classes="muted" FontSize="10"/><TextBlock Grid.Column="3" Text="JOBS" Classes="muted" FontSize="10" HorizontalAlignment="Right"/><TextBlock Grid.Column="4" Text="RUN TIME" Classes="muted" FontSize="10" HorizontalAlignment="Right"/></Grid>
+                            <ItemsControl ItemsSource="{Binding Equipment}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:EquipmentRow">
+                                        <Grid ColumnDefinitions="1.2*,1*,.7*,.6*,.7*" Margin="0,5">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding ProcessStep}" Classes="muted"/>
+                                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6"><Ellipse Width="7" Height="7" Fill="{Binding StatusColor}" VerticalAlignment="Center"/><TextBlock Text="{Binding Status}" Foreground="{Binding StatusColor}" FontSize="11"/></StackPanel>
+                                            <TextBlock Grid.Column="3" Text="{Binding Dispatches}" HorizontalAlignment="Right" Foreground="#CBD2DF"/>
+                                            <TextBlock Grid.Column="4" Text="{Binding RunTime}" HorizontalAlignment="Right" Classes="muted"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="1" Classes="card">
+                        <StackPanel Spacing="12">
+                            <TextBlock Text="Recent work orders" Classes="sectionTitle"/>
+                            <Grid ColumnDefinitions="1.2*,1*,.9*,1*,.5*"><TextBlock Text="ORDER" Classes="muted" FontSize="10"/><TextBlock Grid.Column="1" Text="PRODUCT" Classes="muted" FontSize="10"/><TextBlock Grid.Column="2" Text="STATUS" Classes="muted" FontSize="10"/><TextBlock Grid.Column="3" Text="COMPLETE" Classes="muted" FontSize="10"/><TextBlock Grid.Column="4" Text="PRI" Classes="muted" FontSize="10"/></Grid>
+                            <ItemsControl ItemsSource="{Binding WorkOrders}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="models:WorkOrderRow">
+                                        <Grid ColumnDefinitions="1.2*,1*,.9*,1*,.5*" Margin="0,6">
+                                            <TextBlock Text="{Binding OrderNo}" FontWeight="SemiBold"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding Product}" Classes="muted"/>
+                                            <TextBlock Grid.Column="2" Text="{Binding Status}" Foreground="#6EA8FE" FontSize="11"/>
+                                            <TextBlock Grid.Column="3" Text="{Binding Progress}" Classes="muted"/>
+                                            <TextBlock Grid.Column="4" Text="{Binding Priority}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+
+</Window>

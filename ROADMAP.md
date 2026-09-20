@@ -72,10 +72,25 @@
       48개 테스트 통과. Work Order 생성→Release→Lot 분할을 포함한 별도 50 VU/3분 EXP-003에서
       18,976 requests, 0 failures, 105.68 RPS, P95 34ms, P99 77ms, Work Order 각 단계 878건,
       Server 5xx 0을 측정했다. Workload 구성이 달라 EXP-002와 직접 성능 비교하지 않는다.
+- [x] (2026-09-20) Quality Inspection, Defect Code, Scrap/Rework와 설비 추적 구현. 첫 부하에서 최대
+      4차까지 반복되는 Rework Loop를 발견해 한 번의 재작업만 허용하고 두 번째 실패는 Scrap을
+      요구하도록 수정했다. 동일 50 VU/3분 재측정에서 최대 검사차수 4→2, 3차 이상 5→0,
+      18,050 requests, 실패/5xx/IntegrityError 0을 확인했다. EXP-004, ADR-004, PAR-002에 기록했다.
+- [x] (2026-09-20) Run Time이 균등해도 실제 검사 배정은 1/1/268로 편향된 Metric Blind Spot을 발견.
+      Equipment `dispatch_count`를 1차 Dispatch 기준으로 추가해 79/80/79로 균등화했다. 같은 공정
+      Peer 불량률 Baseline이 INSPECT-03의 27.85% vs Peer 0%를 WARNING으로 탐지했다. EXP-005는
+      17,982 requests, 실패 0, p95 150ms, p99 370ms, 5xx/IntegrityError 0이었다.
+- [x] (2026-09-20) C# Avalonia XAML + MVVM Operator Console 구현. 실제 FastAPI에서 WIP/작업지시/
+      설비/품질/이상 데이터를 조회하며 .NET 10 Release Build 오류·경고 0을 확인했다.
+- [x] (2026-09-20) 공식 MCP Python SDK 기반 read-only MES Gateway 구현. Overview/Lot Trace Resource와
+      품질 이상/Lot 추적/작업지시 Tool을 제공하며 In-memory MCP Smoke Test에서 INSPECT-03 WARNING을
+      실제 호출해 확인했다. A2A 역할과 Command Safety 경계는 Architecture/ADR-006에 기록했다.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
-- [ ] Quality Inspection, Defect Code, Scrap/Rework와 원인추적 구현
+- [ ] A2A Quality Investigation Agent: Agent Card, Task 상태, 조사 Artifact와 승인 Gate
+- [ ] C# UI LOT 검색/Event Timeline과 Work Order 상세 화면
+- [ ] 품질 이상 신호에서 관련 LOT/검사/Event 자동 Drill-down
 - [ ] PostgreSQL 전환 후 조건부 UPDATE vs `SELECT FOR UPDATE` 동시성 비교
 - [ ] OEE(설비종합효율 = 가동률 x 성능 x 양품률) 지표 계산 및 `/metrics`에 추가
 - [ ] 설비 다운타임/알람 이벤트 모델 (DOWN 상태 발생·복구 이력 기록)

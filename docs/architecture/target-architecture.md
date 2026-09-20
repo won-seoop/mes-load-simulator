@@ -23,6 +23,7 @@ ERP / Plan Simulator
        PostgreSQL (현재 SQLite)
        ├─ Current State
        ├─ Lot Event Journal
+       ├─ Quality Inspection / Anomaly
        └─ Outbox (후속 Phase)
                 │
                 ▼
@@ -77,3 +78,13 @@ Equipment Event Ingestion
 7. Idempotent Consumer / Retry / DLQ
 8. Replay / Operations Dashboard
 
+## Operator and Agent Access
+
+```text
+C# Avalonia Operator Console ──REST──► MES API
+Claude / Codex Host ──MCP──► Read-only MES Gateway ──REST──► MES API
+Independent Agents ──A2A Task/Artifact──► Agent Orchestrator (후속 Phase)
+```
+
+MCP/A2A는 Domain Event Broker를 대체하지 않는다. 현재 MCP는 조회만 제공하며 안전에 영향을 주는
+생산 Command는 사용자 승인, 권한, Audit, Idempotency를 검증한 뒤 별도 Phase에서 검토한다.

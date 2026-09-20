@@ -1,6 +1,10 @@
 .venv/
+.venv-mcp/
 __pycache__/
 *.pyc
 *.db
 .pytest_cache/
 reports/raw/
+**/bin/
+**/obj/
+.DS_Store

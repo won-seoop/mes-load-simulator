@@ -1,0 +1,39 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="FactoryFlow.Operator.App"
+             xmlns:local="using:FactoryFlow.Operator"
+             RequestedThemeVariant="Dark">
+
+    <Application.DataTemplates>
+        <local:ViewLocator />
+    </Application.DataTemplates>
+
+    <Application.Styles>
+        <FluentTheme />
+        <Style Selector="Window">
+            <Setter Property="Background" Value="#0B1020" />
+            <Setter Property="FontFamily" Value="Inter" />
+        </Style>
+        <Style Selector="Border.card">
+            <Setter Property="Background" Value="#141B2D" />
+            <Setter Property="BorderBrush" Value="#25304A" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="18" />
+        </Style>
+        <Style Selector="TextBlock.sectionTitle">
+            <Setter Property="FontSize" Value="17" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#F4F7FB" />
+        </Style>
+        <Style Selector="TextBlock.muted">
+            <Setter Property="Foreground" Value="#8B95A7" />
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background" Value="#2F6FED" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Padding" Value="16,9" />
+        </Style>
+    </Application.Styles>
+</Application>
