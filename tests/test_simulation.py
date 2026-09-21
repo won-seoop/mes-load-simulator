@@ -191,6 +191,62 @@ def test_equipment_trips_down_and_recovers_on_schedule(client, monkeypatch):
         db.close()
 
 
+def test_broken_lot_does_not_block_other_due_lots_in_same_tick(client, monkeypatch):
+    """Regression test for a production incident: a lot HELD at the last
+    process step used to raise an uncaught ValueError (HOLD -> QUALITY_HOLD
+    was missing from the state machine). Because _advance_due_lots only
+    caught HTTPException, that error propagated out of the whole tick and
+    left every other due lot in that tick — and every tick after, since the
+    failing lot was never rescheduled — permanently stuck. This reproduces
+    that shape with a synthetic failure (independent of which bug caused it)
+    and asserts the *isolation* fix: one lot's exception must not block
+    lots scheduled earlier in the same _next_action dict, and the broken lot
+    must be rescheduled with backoff rather than spinning or vanishing.
+    """
+    from app import main as mes_main
+
+    db = SessionLocal()
+    try:
+        bad_lot = mes_main.create_lot(mes_main.LotCreate(product="WAFER-A", quantity=10), db=db)
+        good_lot = mes_main.create_lot(mes_main.LotCreate(product="WAFER-B", quantity=10), db=db)
+        bad_id, good_id = bad_lot.id, good_lot.id
+    finally:
+        db.close()
+
+    real_advance_lot = mes_main.advance_lot
+
+    def flaky_advance_lot(lot_id, db):
+        if lot_id == bad_id:
+            raise ValueError("synthetic invalid transition for regression test")
+        return real_advance_lot(lot_id, db=db)
+
+    monkeypatch.setattr(mes_main, "advance_lot", flaky_advance_lot)
+
+    engine = SimulationEngine()
+    t0 = datetime(2026, 1, 1, 0, 0, 0)
+    _freeze_main_time(monkeypatch, t0)
+    engine._next_lot_arrival_at = t0 + timedelta(days=1)  # no new spawns this tick
+    # bad_id is due *before* good_id in iteration order — under the old code
+    # bad_id's exception would abort the loop before good_id was ever tried.
+    engine._next_action = {bad_id: t0, good_id: t0}
+
+    engine._tick_once(now=t0)
+
+    db = SessionLocal()
+    try:
+        good = db.get(Lot, good_id)
+        assert good.status == LotStatus.PROCESSING
+        assert good.step_index == 1
+        bad = db.get(Lot, bad_id)
+        assert bad.status == LotStatus.WAITING  # untouched by the failed call
+        assert bad.step_index == 0
+    finally:
+        db.close()
+
+    assert bad_id in engine._next_action
+    assert engine._next_action[bad_id] > t0 + timedelta(seconds=5)
+
+
 def test_http_start_and_stop_actually_control_the_background_task(client):
     resp = client.post("/simulation/start")
     assert resp.status_code == 200

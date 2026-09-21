@@ -8,7 +8,10 @@ ALLOWED_LOT_TRANSITIONS = {
         LotStatus.HOLD,
         LotStatus.QUALITY_HOLD,
     },
-    LotStatus.HOLD: {LotStatus.PROCESSING},
+    # A lot HOLD-ed at the *last* process step (equipment was down at INSPECT)
+    # completes that step directly into QUALITY_HOLD once released, same as a
+    # PROCESSING lot would; it never passes through PROCESSING again.
+    LotStatus.HOLD: {LotStatus.PROCESSING, LotStatus.QUALITY_HOLD},
     LotStatus.QUALITY_HOLD: {
         LotStatus.DONE,
         LotStatus.REWORK,

@@ -119,6 +119,34 @@ def test_advance_lot_resumes_once_equipment_is_freed(client):
     assert lot["step_index"] == 1
 
 
+def test_advance_lot_resumes_to_quality_hold_when_held_at_last_step(client):
+    """Regression test: a lot HELD at the *last* step (all INSPECT tools
+    DOWN) completes that step straight into QUALITY_HOLD once equipment is
+    freed, instead of the state machine rejecting HOLD -> QUALITY_HOLD as an
+    invalid transition (it previously only allowed HOLD -> PROCESSING)."""
+    lot = _create_lot(client)
+    for _ in range(len(PROCESS_ROUTE) - 1):
+        lot = client.post(f"/lots/{lot['id']}/advance").json()
+    assert lot["step_index"] == len(PROCESS_ROUTE) - 1
+
+    last_step = PROCESS_ROUTE[-1]
+    equipment = client.get("/equipment").json()
+    last_step_ids = [eq["id"] for eq in equipment if eq["process_step"] == last_step]
+    for eq_id in last_step_ids:
+        client.patch(f"/equipment/{eq_id}/status", json={"status": "DOWN"})
+
+    lot = client.post(f"/lots/{lot['id']}/advance").json()
+    assert lot["status"] == "HOLD"
+    assert lot["step_index"] == len(PROCESS_ROUTE) - 1
+
+    client.patch(f"/equipment/{last_step_ids[0]}/status", json={"status": "IDLE"})
+    resp = client.post(f"/lots/{lot['id']}/advance")
+    assert resp.status_code == 200
+    lot = resp.json()
+    assert lot["status"] == "QUALITY_HOLD"
+    assert lot["step_index"] == len(PROCESS_ROUTE)
+
+
 def test_cannot_advance_a_done_lot(client):
     lot = _create_lot(client)
     for _ in range(len(PROCESS_ROUTE)):

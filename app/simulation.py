@@ -15,6 +15,7 @@ real API call can never disagree about what a valid transition is.
 """
 
 import asyncio
+import logging
 import random
 from collections import deque
 from dataclasses import asdict, dataclass
@@ -22,6 +23,8 @@ from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger("app.simulation")
 
 from app.database import SessionLocal
 from app.models import (
@@ -214,6 +217,17 @@ class SimulationEngine:
             except HTTPException:
                 # Transient business conflict (e.g. concurrent change) — retry shortly.
                 self._next_action[lot_id] = now + timedelta(seconds=2)
+            except Exception as exc:
+                # A single lot's bug (e.g. an unreachable state transition) must
+                # never abort the whole tick — that would silently freeze every
+                # other lot behind it and re-fire forever, since this lot stays
+                # in _next_action with a now-past due time. Isolate per lot,
+                # back off longer than the transient-conflict case, and log to
+                # both the dashboard feed and the server log (the latter is what
+                # external health checks actually grep for).
+                self._next_action[lot_id] = now + timedelta(seconds=15)
+                logger.warning("tick error advancing lot #%s: %r", lot_id, exc)
+                self._log(f"⚠️ 로트 #{lot_id} 처리 오류: {exc}")
 
     def _act_on_lot(self, db: Session, lot: Lot, now: datetime, mes_main) -> None:
         if lot.status in (LotStatus.WAITING, LotStatus.PROCESSING, LotStatus.HOLD):

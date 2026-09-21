@@ -8,3 +8,4 @@ reports/raw/
 **/bin/
 **/obj/
 .DS_Store
+.claude/
