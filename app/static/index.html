@@ -63,7 +63,8 @@
     font-size: 0.82rem; font-weight: 500; cursor: pointer;
     width: 100%;
   }
-  .nav-item .ic { font-size: 0.95rem; width: 18px; text-align: center; }
+  .nav-item .ic { display: inline-flex; align-items: center; justify-content: center; width: 18px; flex: none; }
+  .nav-item .ic svg { width: 16px; height: 16px; display: block; }
   .nav-item:hover { background: var(--panel); color: var(--text); }
   .nav-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 700; }
   .sidebar-footer { padding: 12px 14px; border-top: 1px solid var(--border); font-size: 0.7rem; color: var(--muted); }
@@ -209,7 +210,8 @@
     flex-direction: column; gap: 2px; padding: 6px 2px;
     font-size: 0.62rem; border-radius: 10px; text-align: center;
   }
-  .bottom-nav .nav-item .ic { font-size: 1.05rem; width: auto; }
+  .bottom-nav .nav-item .ic { width: auto; }
+  .bottom-nav .nav-item .ic svg { width: 20px; height: 20px; }
   .bottom-nav .nav-item .lb { line-height: 1; }
 
   /* ---------- responsive: tablet / phone ---------- */
@@ -258,12 +260,6 @@
         </div>
       </div>
       <nav class="nav" id="nav">
-        <button class="nav-item active" data-view="overview"><span class="ic">📊</span>대시보드</button>
-        <button class="nav-item" data-view="equipment"><span class="ic">⚙️</span>설비 현황</button>
-        <button class="nav-item" data-view="workorders"><span class="ic">📋</span>작업지시</button>
-        <button class="nav-item" data-view="lots"><span class="ic">📦</span>로트 / WIP</button>
-        <button class="nav-item" data-view="quality"><span class="ic">🔬</span>품질</button>
-        <button class="nav-item" data-view="simulation"><span class="ic">▶</span>시뮬레이션</button>
       </nav>
       <div class="sidebar-footer"><span class="dot" id="conn-dot"></span><span id="status">연결 확인 중…</span></div>
     </aside>
@@ -419,20 +415,42 @@
     </div>
   </div>
 
-  <nav class="bottom-nav" id="bottom-nav">
-    <button class="nav-item active" data-view="overview"><span class="ic">📊</span><span class="lb">대시보드</span></button>
-    <button class="nav-item" data-view="equipment"><span class="ic">⚙️</span><span class="lb">설비</span></button>
-    <button class="nav-item" data-view="workorders"><span class="ic">📋</span><span class="lb">작업지시</span></button>
-    <button class="nav-item" data-view="lots"><span class="ic">📦</span><span class="lb">로트</span></button>
-    <button class="nav-item" data-view="quality"><span class="ic">🔬</span><span class="lb">품질</span></button>
-    <button class="nav-item" data-view="simulation"><span class="ic">▶</span><span class="lb">시뮬</span></button>
-  </nav>
+  <nav class="bottom-nav" id="bottom-nav"></nav>
 
   <div id="drawer-root"></div>
 
 <script>
 const REFRESH_MS = 2000;
 const PROCESS_ROUTE = ["ETCH", "CVD", "CMP", "INSPECT"];
+
+/* ---------------- nav icons (inline SVG, no emoji/icon font) ---------------- */
+const SVG_ATTRS = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+const ICONS = {
+  overview: `<svg ${SVG_ATTRS}><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>`,
+  equipment: `<svg ${SVG_ATTRS}><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>`,
+  workorders: `<svg ${SVG_ATTRS}><path d="M9 3h6a1 1 0 0 1 1 1v1h1a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1V4a1 1 0 0 1 1-1z"/><path d="M9 12h6M9 16h6"/></svg>`,
+  lots: `<svg ${SVG_ATTRS}><path d="M21 7.5l-9-5-9 5 9 5 9-5z"/><path d="M3 7.5v9l9 5 9-5v-9"/><path d="M12 12.5v9"/></svg>`,
+  quality: `<svg ${SVG_ATTRS}><path d="M12 2.5l7 2.7v6.1c0 5-3.2 8.4-7 10.2-3.8-1.8-7-5.2-7-10.2V5.2l7-2.7z"/><path d="M9 12l2 2 4-4.5"/></svg>`,
+  simulation: `<svg ${SVG_ATTRS}><circle cx="12" cy="12" r="9.5"/><path d="M10 8.5l6 3.5-6 3.5v-7z"/></svg>`,
+};
+const NAV_ITEMS = [
+  { view: "overview", label: "대시보드", short: "대시보드" },
+  { view: "equipment", label: "설비 현황", short: "설비" },
+  { view: "workorders", label: "작업지시", short: "작업지시" },
+  { view: "lots", label: "로트 / WIP", short: "로트" },
+  { view: "quality", label: "품질", short: "품질" },
+  { view: "simulation", label: "시뮬레이션", short: "시뮬" },
+];
+
+function renderNav() {
+  document.getElementById("nav").innerHTML = NAV_ITEMS.map((item, i) => `
+    <button class="nav-item${i === 0 ? " active" : ""}" data-view="${item.view}"><span class="ic">${ICONS[item.view]}</span>${item.label}</button>
+  `).join("");
+  document.getElementById("bottom-nav").innerHTML = NAV_ITEMS.map((item, i) => `
+    <button class="nav-item${i === 0 ? " active" : ""}" data-view="${item.view}"><span class="ic">${ICONS[item.view]}</span><span class="lb">${item.short}</span></button>
+  `).join("");
+}
+renderNav();
 let selectedLotId = null;
 
 async function getJSON(path, options) {
