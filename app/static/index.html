@@ -198,20 +198,42 @@
   .timeline-item .t { color: var(--muted); font-size: 0.66rem; }
   .timeline-item .e { font-weight: 700; margin: 2px 0; }
 
-  /* ---------- responsive: phone ---------- */
+  /* ---------- responsive: tablet / phone ---------- */
   @media (max-width: 760px) {
     .app-shell { flex-direction: column; }
     .sidebar {
       width: 100%; height: auto; position: sticky; top: 0; z-index: 10;
       flex-direction: row; align-items: center; border-right: none; border-bottom: 1px solid var(--border);
     }
-    .brand { border-bottom: none; padding: 10px 12px; }
+    .brand { border-bottom: none; padding: 8px 10px; }
     .brand-sub { display: none; }
-    .nav { flex-direction: row; overflow-x: auto; padding: 8px; flex: 1; }
-    .nav-item { flex: none; white-space: nowrap; }
+    .nav {
+      flex-direction: row; overflow-x: auto; -webkit-overflow-scrolling: touch;
+      padding: 6px; flex: 1; scrollbar-width: none;
+    }
+    .nav::-webkit-scrollbar { display: none; }
+    .nav-item { flex: none; white-space: nowrap; padding: 8px 10px; font-size: 0.78rem; }
     .sidebar-footer { display: none; }
-    .content { padding: 12px; }
+    .topbar { padding: 0 12px; height: 44px; }
+    .topbar-title { font-size: 0.85rem; }
+    .topbar-right { gap: 8px; }
+    .content { padding: 10px; }
+    .cards { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .card .value { font-size: 1.15rem; }
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .flow { flex-wrap: wrap; }
+    .flow-step { flex: 1 1 30%; min-width: 70px; }
+    .form-grid { grid-template-columns: 1fr 1fr; }
     .drawer { width: 100%; }
+    th, td { padding: 6px 7px; font-size: 0.72rem; }
+  }
+
+  @media (max-width: 420px) {
+    .cards, .grid { grid-template-columns: repeat(2, 1fr); }
+    .brand-name { font-size: 0.78rem; }
+    .nav-item .ic { font-size: 0.85rem; }
+    .sim-controls { gap: 6px; }
+    .btn { padding: 6px 10px; font-size: 0.75rem; }
   }
 </style>
 </head>
