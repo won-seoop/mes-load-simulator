@@ -45,6 +45,7 @@ from app.schemas import (
     WorkOrderLotCreate,
     WorkOrderOut,
 )
+from app.simulation import engine as simulation_engine
 from app.state_machine import ensure_lot_transition
 from app.timeutils import kst_midnight_utc
 
@@ -985,6 +986,34 @@ def metrics(db: Session = Depends(get_db)):
         throughput_per_hour=throughput,
         **hold_wait,
     )
+
+
+@app.post("/simulation/start")
+async def start_simulation():
+    """Start the autonomous simulation engine (app/simulation.py).
+
+    Defined async so it runs on the event loop thread rather than in
+    Starlette's sync-route threadpool — asyncio.create_task() inside
+    SimulationEngine.start() requires a running loop on the calling thread.
+    """
+    simulation_engine.start()
+    return simulation_engine.status()
+
+
+@app.post("/simulation/stop")
+async def stop_simulation():
+    simulation_engine.stop()
+    return simulation_engine.status()
+
+
+@app.get("/simulation/status")
+async def simulation_status():
+    return simulation_engine.status()
+
+
+@app.on_event("shutdown")
+def stop_simulation_on_shutdown():
+    simulation_engine.stop()
 
 
 # Mounted last so it only serves paths no API route above already claimed

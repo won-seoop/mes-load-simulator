@@ -88,6 +88,49 @@
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; }
   .dot.off { background: var(--bad); }
   #status { font-size: 0.72rem; color: var(--muted); }
+  .sim-panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .sim-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .sim-controls button {
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .sim-controls button#sim-start { border-color: var(--good); color: var(--good); }
+  .sim-controls button#sim-stop { border-color: var(--bad); color: var(--bad); }
+  .sim-controls button:disabled { opacity: 0.35; cursor: default; }
+  #sim-status-text { font-size: 0.78rem; color: var(--muted); }
+  .event-feed {
+    max-height: 220px;
+    overflow-y: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.72rem;
+    color: var(--muted);
+    background: var(--panel-2);
+    border-radius: 8px;
+    padding: 8px;
+  }
+  .event-feed div { padding: 1px 0; white-space: nowrap; }
+  .flow { display: flex; gap: 8px; }
+  .flow-step {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 6px;
+    text-align: center;
+  }
+  .flow-label { font-size: 0.72rem; color: var(--muted); }
+  .flow-count { font-size: 1.5rem; font-weight: 700; color: var(--accent); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -95,6 +138,23 @@
   <div class="sub"><span class="dot" id="conn-dot"></span><span id="status">연결 확인 중…</span></div>
 
   <div class="cards" id="cards"></div>
+
+  <section>
+    <h2>시뮬레이션 엔진</h2>
+    <div class="sim-panel">
+      <div class="sim-controls">
+        <button id="sim-start">▶ 시작</button>
+        <button id="sim-stop">■ 정지</button>
+        <span id="sim-status-text">상태 확인 중…</span>
+      </div>
+      <div class="event-feed" id="event-feed"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>공정 흐름 (진행 중인 로트)</h2>
+    <div class="flow" id="process-flow"></div>
+  </section>
 
   <section>
     <h2>설비 (Equipment)</h2>
@@ -117,7 +177,8 @@
   </section>
 
 <script>
-const REFRESH_MS = 4000;
+const REFRESH_MS = 2000;
+const PROCESS_ROUTE = ["ETCH", "CVD", "CMP", "INSPECT"];
 
 async function getJSON(path) {
   const res = await fetch(path, { cache: "no-store" });
@@ -144,6 +205,49 @@ function renderCards(metrics, quality) {
     ([label, value]) => `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`
   ).join("");
 }
+
+function renderSimulation(sim) {
+  const startBtn = document.getElementById("sim-start");
+  const stopBtn = document.getElementById("sim-stop");
+  startBtn.disabled = sim.running;
+  stopBtn.disabled = !sim.running;
+  document.getElementById("sim-status-text").textContent = sim.running
+    ? `실행 중 · tick ${sim.ticks} · 시작 ${new Date(sim.started_at).toLocaleTimeString("ko-KR")}`
+    : "정지됨 — '시작'을 누르면 로트가 자동으로 투입/진행됩니다";
+  const feed = document.getElementById("event-feed");
+  feed.innerHTML = sim.recent_events.length
+    ? sim.recent_events.map(e => `<div>${e}</div>`).join("")
+    : `<div class="empty">이벤트 없음</div>`;
+}
+
+function renderProcessFlow(lots) {
+  const activeStatuses = new Set(["WAITING", "PROCESSING"]);
+  const counts = PROCESS_ROUTE.map(
+    (_, idx) => lots.filter(l => l.step_index === idx && activeStatuses.has(l.status)).length
+  );
+  const qualityHold = lots.filter(l => l.status === "QUALITY_HOLD").length;
+  const steps = [...PROCESS_ROUTE, "QUALITY_HOLD"];
+  const values = [...counts, qualityHold];
+  document.getElementById("process-flow").innerHTML = steps.map((s, i) => `
+    <div class="flow-step">
+      <div class="flow-label">${s}</div>
+      <div class="flow-count">${values[i]}</div>
+    </div>
+  `).join("");
+}
+
+async function startSimulation() {
+  await fetch("/simulation/start", { method: "POST" });
+  tick();
+}
+
+async function stopSimulation() {
+  await fetch("/simulation/stop", { method: "POST" });
+  tick();
+}
+
+document.getElementById("sim-start").addEventListener("click", startSimulation);
+document.getElementById("sim-stop").addEventListener("click", stopSimulation);
 
 function renderEquipment(list) {
   document.getElementById("equipment").innerHTML = list.map(eq => `
@@ -208,15 +312,18 @@ function renderAnomalies(report) {
 
 async function tick() {
   try {
-    const [metrics, equipment, workOrders, lots, quality, anomalies] = await Promise.all([
+    const [metrics, equipment, workOrders, lots, quality, anomalies, sim] = await Promise.all([
       getJSON("/metrics"),
       getJSON("/equipment"),
       getJSON("/work-orders"),
       getJSON("/lots"),
       getJSON("/quality/metrics"),
       getJSON("/quality/anomalies"),
+      getJSON("/simulation/status"),
     ]);
     renderCards(metrics, quality);
+    renderSimulation(sim);
+    renderProcessFlow(lots);
     renderEquipment(equipment);
     renderWorkOrders(workOrders);
     renderLots(lots);
