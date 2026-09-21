@@ -166,3 +166,31 @@ class QualityInspection(Base):
         Enum(QualityDisposition), nullable=False, default=QualityDisposition.NONE, index=True
     )
     inspected_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class AnomalyLog(Base):
+    """Persisted record of a quality anomaly the system detected on its own.
+
+    /quality/anomalies computes this signal live from QualityInspection rows
+    on every request and forgets it the moment the response is sent — there
+    was no history of *when* an anomaly first appeared or how it evolved.
+    The simulation engine periodically runs the same detection and writes a
+    row here (throttled per equipment so a standing anomaly doesn't spam one
+    row per tick), giving the dashboard's Anomaly Log page something to show
+    and a paper trail independent of any one live poll.
+    """
+
+    __tablename__ = "anomaly_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    detected_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=False, index=True)
+    equipment_name = Column(String, nullable=False)
+    process_step = Column(String, nullable=False, index=True)
+    severity = Column(String, nullable=False, index=True)
+    defect_rate = Column(Float, nullable=False)
+    peer_mean_rate = Column(Float, nullable=False)
+    z_score = Column(Float, nullable=True)
+    total_inspections = Column(Integer, nullable=False)
+    method = Column(String, nullable=False)
+    note = Column(String, nullable=True)

@@ -2,8 +2,33 @@ import time
 from datetime import datetime, timedelta
 
 from app.database import SessionLocal
-from app.models import Equipment, EquipmentStatus, Lot, LotStatus
+from app.models import PROCESS_ROUTE, AnomalyLog, Equipment, EquipmentStatus, Lot, LotStatus
 from app.simulation import SimulationConfig, SimulationEngine
+
+
+def _seed_inspect03_anomaly(client):
+    """Reproduces the same equipment-correlated defect pattern as
+    test_quality.py's anomaly test: INSPECT-03 fails 10/10 while its two
+    peers pass 10/10 each, which /quality/anomalies flags CRITICAL."""
+    inspect_equipment = [
+        item for item in client.get("/equipment").json() if item["process_step"] == "INSPECT"
+    ]
+    for target in inspect_equipment:
+        for equipment in inspect_equipment:
+            status = "IDLE" if equipment["id"] == target["id"] else "DOWN"
+            client.patch(f"/equipment/{equipment['id']}/status", json={"status": status})
+        for _ in range(10):
+            lot = client.post("/lots", json={"product": "WAFER-A", "quantity": 25}).json()
+            for _ in PROCESS_ROUTE:
+                lot = client.post(f"/lots/{lot['id']}/advance").json()
+            if target["name"] == "INSPECT-03":
+                client.post(
+                    f"/lots/{lot['id']}/inspections",
+                    json={"result": "FAIL", "defect_code": "SENSOR_DRIFT"},
+                )
+                client.post(f"/lots/{lot['id']}/quality-disposition", json={"disposition": "SCRAP"})
+            else:
+                client.post(f"/lots/{lot['id']}/inspections", json={"result": "PASS"})
 
 
 def _freeze_main_time(monkeypatch, when):
@@ -264,3 +289,68 @@ def test_http_start_and_stop_actually_control_the_background_task(client):
     # Give the background loop time to actually exit before the next test's
     # fixture drops and recreates the schema out from under it.
     time.sleep(1.5)
+
+
+def test_anomaly_check_persists_a_new_finding_and_logs_the_event(client, monkeypatch):
+    _seed_inspect03_anomaly(client)
+
+    engine = SimulationEngine()
+    from app import main as mes_main
+
+    t0 = datetime(2026, 1, 1, 0, 0, 0)
+    _freeze_main_time(monkeypatch, t0)
+    engine._next_anomaly_check_at = t0
+
+    db = SessionLocal()
+    try:
+        engine._maybe_check_anomalies(db, t0, mes_main)
+    finally:
+        db.close()
+
+    db = SessionLocal()
+    try:
+        rows = db.query(AnomalyLog).all()
+        assert len(rows) == 1
+        assert rows[0].equipment_name == "INSPECT-03"
+        assert rows[0].severity == "CRITICAL"
+    finally:
+        db.close()
+    assert any("품질 이상 감지" in e for e in engine._events)
+
+
+def test_anomaly_check_suppresses_duplicate_rows_within_the_window(client, monkeypatch):
+    _seed_inspect03_anomaly(client)
+
+    engine = SimulationEngine()
+    from app import main as mes_main
+
+    t0 = datetime(2026, 1, 1, 0, 0, 0)
+    _freeze_main_time(monkeypatch, t0)
+    engine._next_anomaly_check_at = t0
+    db = SessionLocal()
+    try:
+        engine._maybe_check_anomalies(db, t0, mes_main)
+    finally:
+        db.close()
+
+    # Still well inside the suppression window: same equipment must not log again.
+    t1 = t0 + timedelta(seconds=60)
+    _freeze_main_time(monkeypatch, t1)
+    engine._next_anomaly_check_at = t1
+    db = SessionLocal()
+    try:
+        engine._maybe_check_anomalies(db, t1, mes_main)
+        assert db.query(AnomalyLog).count() == 1
+    finally:
+        db.close()
+
+    # Past the suppression window: the still-standing anomaly logs again.
+    t2 = t0 + timedelta(seconds=400)
+    _freeze_main_time(monkeypatch, t2)
+    engine._next_anomaly_check_at = t2
+    db = SessionLocal()
+    try:
+        engine._maybe_check_anomalies(db, t2, mes_main)
+        assert db.query(AnomalyLog).count() == 2
+    finally:
+        db.close()

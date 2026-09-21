@@ -28,6 +28,7 @@ logger = logging.getLogger("app.simulation")
 
 from app.database import SessionLocal
 from app.models import (
+    AnomalyLog,
     Equipment,
     EquipmentStatus,
     InspectionResult,
@@ -38,6 +39,13 @@ from app.models import (
     QualityDisposition,
     QualityInspection,
 )
+
+# How often (in simulated wall-clock seconds) the engine re-runs anomaly
+# detection, and how long a given equipment's last logged anomaly suppresses
+# a fresh row — otherwise a standing anomaly would write a new AnomalyLog
+# entry on every check while it persists, drowning out genuinely new ones.
+ANOMALY_CHECK_INTERVAL_SECONDS = 30.0
+ANOMALY_LOG_SUPPRESS_SECONDS = 300.0
 
 DEFECT_CODES = [
     "PARTICLE_CONTAMINATION",
@@ -89,6 +97,7 @@ class SimulationEngine:
         self._next_lot_arrival_at: datetime | None = None
         self._next_action: dict[int, datetime] = {}  # lot_id -> next action due time
         self._next_equipment_recovery: dict[int, datetime] = {}
+        self._next_anomaly_check_at: datetime | None = None
         self._events: deque[str] = deque(maxlen=40)
         self._mes_main = None  # lazily imported to avoid a circular import
 
@@ -111,6 +120,7 @@ class SimulationEngine:
         self._started_at = datetime.utcnow()
         self._ticks = 0
         self._next_lot_arrival_at = datetime.utcnow()
+        self._next_anomaly_check_at = datetime.utcnow()
         self._log("시뮬레이션 시작")
         self._task = asyncio.create_task(self._run())
 
@@ -145,6 +155,7 @@ class SimulationEngine:
             self._maybe_trip_equipment(db, now, mes_main)
             self._maybe_spawn_lot(db, now, mes_main)
             self._advance_due_lots(db, now, mes_main)
+            self._maybe_check_anomalies(db, now, mes_main)
         finally:
             db.close()
 
@@ -184,6 +195,48 @@ class SimulationEngine:
                 eid, mes_main.EquipmentStatusUpdate(status=EquipmentStatus.IDLE), db=db
             )
             self._log(f"설비 {eq.name} 복구")
+
+    # -- quality anomaly detection -----------------------------------------
+    def _maybe_check_anomalies(self, db: Session, now: datetime, mes_main) -> None:
+        if (
+            self._next_anomaly_check_at is not None
+            and now < self._next_anomaly_check_at
+        ):
+            return
+        self._next_anomaly_check_at = now + timedelta(seconds=ANOMALY_CHECK_INTERVAL_SECONDS)
+
+        for anomaly in mes_main._detect_quality_anomalies(db):
+            suppress_since = now - timedelta(seconds=ANOMALY_LOG_SUPPRESS_SECONDS)
+            recent = (
+                db.query(AnomalyLog)
+                .filter(
+                    AnomalyLog.equipment_id == anomaly.equipment_id,
+                    AnomalyLog.detected_at >= suppress_since,
+                )
+                .first()
+            )
+            if recent is not None:
+                continue
+            db.add(
+                AnomalyLog(
+                    detected_at=now,
+                    equipment_id=anomaly.equipment_id,
+                    equipment_name=anomaly.equipment_name,
+                    process_step=anomaly.process_step,
+                    severity=anomaly.severity,
+                    defect_rate=anomaly.defect_rate,
+                    peer_mean_rate=anomaly.peer_mean_rate,
+                    z_score=anomaly.z_score,
+                    total_inspections=anomaly.total_inspections,
+                    method=mes_main.ANOMALY_METHOD,
+                )
+            )
+            db.commit()
+            self._log(
+                f"⚠️ 품질 이상 감지: {anomaly.equipment_name} ({anomaly.process_step}) "
+                f"{anomaly.severity} — 불량률 {anomaly.defect_rate * 100:.1f}% "
+                f"vs 동료 {anomaly.peer_mean_rate * 100:.1f}%"
+            )
 
     # -- lot arrivals -----------------------------------------------------
     def _maybe_spawn_lot(self, db: Session, now: datetime, mes_main) -> None:

@@ -138,3 +138,30 @@ def test_concurrent_advance_allows_only_one_state_transition(client, monkeypatch
         if event["event_type"] == "PROCESS_COMPLETED"
     ]
     assert len(process_events) == 1
+
+
+def test_equipment_events_returns_only_that_equipment_dispatch_history(client):
+    lot = _create_lot(client)
+    resp = client.post(f"/lots/{lot['id']}/advance")
+    assert resp.status_code == 200
+    advanced = resp.json()
+
+    equipment = client.get("/equipment").json()
+    etch_equipment = [eq for eq in equipment if eq["process_step"] == PROCESS_ROUTE[0]]
+    dispatched = next(eq for eq in etch_equipment if eq["dispatch_count"] == 1)
+    idle_peer = next(eq for eq in etch_equipment if eq["dispatch_count"] == 0)
+
+    events = client.get(f"/equipment/{dispatched['id']}/events")
+    assert events.status_code == 200
+    body = events.json()
+    assert len(body) == 1
+    assert body[0]["lot_id"] == advanced["id"]
+    assert body[0]["event_type"] == "PROCESS_COMPLETED"
+    assert body[0]["equipment_id"] == dispatched["id"]
+
+    assert client.get(f"/equipment/{idle_peer['id']}/events").json() == []
+
+
+def test_equipment_events_404s_for_unknown_equipment(client):
+    resp = client.get("/equipment/999999/events")
+    assert resp.status_code == 404

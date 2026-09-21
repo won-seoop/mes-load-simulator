@@ -229,11 +229,14 @@
   .cfg-item .k { color: var(--muted); font-size: 0.64rem; font-weight: 600; margin-bottom: 2px; }
 
   /* ---------- lot detail drawer ---------- */
-  .drawer-overlay { position: fixed; inset: 0; background: rgba(15,20,35,.4); z-index: 20; }
+  /* Above .gnb-top (z-index 40) and .bottom-nav (30) — otherwise the fixed
+     header/tab bar visually and interactively covers the drawer's close
+     button and top edge. */
+  .drawer-overlay { position: fixed; inset: 0; background: rgba(15,20,35,.4); z-index: 50; }
   .drawer {
     position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100%);
     background: var(--panel); border-left: 1px solid var(--border);
-    z-index: 21; padding: 18px; overflow-y: auto;
+    z-index: 51; padding: 18px; overflow-y: auto;
   }
   .drawer h3 { margin: 0 0 4px; font-size: 1rem; }
   .drawer .close { position: absolute; top: 14px; right: 14px; background: none; border: none; color: var(--muted); font-size: 1.3rem; cursor: pointer; }
@@ -333,10 +336,10 @@
       <section class="panel" data-panel="equipment">
         <div class="page-head">
           <h2>설비 현황</h2>
-          <div class="page-desc">공정 단계별 설비 상태, 가동시간, 배정 횟수. IDLE/RUN/DOWN 버튼으로 수동 제어 가능.</div>
+          <div class="page-desc">공정 단계별로 분류된 설비 상태. 카드를 클릭하면 상세 대시보드와 로그를 볼 수 있습니다.</div>
         </div>
         <div class="donut-row" id="equipment-summary" style="margin-bottom:16px;"></div>
-        <div class="grid" id="equipment"></div>
+        <div id="equipment-categories"></div>
       </section>
 
       <!-- ================= WORK ORDERS ================= -->
@@ -418,6 +421,18 @@
         </section>
       </section>
 
+      <!-- ================= ANOMALY LOG ================= -->
+      <section class="panel" data-panel="anomalylog">
+        <div class="page-head">
+          <h2>이상 이력</h2>
+          <div class="page-desc">
+            시뮬레이션 엔진이 30초마다 통계적 품질 이상을 자동 검사해서 저장한 기록입니다.
+            같은 설비는 5분 동안 중복 기록하지 않습니다 (지속되는 이상 하나가 매번 새 행을 만들지 않도록).
+          </div>
+        </div>
+        <div class="table-wrap" id="anomaly-log-wrap"></div>
+      </section>
+
       <!-- ================= SIMULATION ================= -->
       <section class="panel" data-panel="simulation">
         <div class="page-head">
@@ -464,6 +479,7 @@ const ICONS = {
   lots: `<svg ${SVG_ATTRS}><path d="M21 7.5l-9-5-9 5 9 5 9-5z"/><path d="M3 7.5v9l9 5 9-5v-9"/><path d="M12 12.5v9"/></svg>`,
   quality: `<svg ${SVG_ATTRS}><path d="M12 2.5l7 2.7v6.1c0 5-3.2 8.4-7 10.2-3.8-1.8-7-5.2-7-10.2V5.2l7-2.7z"/><path d="M9 12l2 2 4-4.5"/></svg>`,
   simulation: `<svg ${SVG_ATTRS}><circle cx="12" cy="12" r="9.5"/><path d="M10 8.5l6 3.5-6 3.5v-7z"/></svg>`,
+  anomalylog: `<svg ${SVG_ATTRS}><path d="M12 3l9 16H3l9-16z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>`,
 };
 const NAV_ITEMS = [
   { view: "overview", label: "대시보드", short: "대시보드" },
@@ -471,6 +487,7 @@ const NAV_ITEMS = [
   { view: "workorders", label: "작업지시", short: "작업지시" },
   { view: "lots", label: "로트 / WIP", short: "로트" },
   { view: "quality", label: "품질", short: "품질" },
+  { view: "anomalylog", label: "이상 이력", short: "이상이력" },
   { view: "simulation", label: "시뮬레이션", short: "시뮬" },
 ];
 
@@ -492,6 +509,7 @@ document.getElementById("nav-search").addEventListener("input", e => {
 });
 
 let selectedLotId = null;
+let selectedEquipmentId = null;
 
 async function getJSON(path, options) {
   const res = await fetch(path, { cache: "no-store", ...options });
@@ -524,6 +542,7 @@ const VIEW_TITLES = {
   workorders: "작업지시",
   lots: "로트 / WIP",
   quality: "품질",
+  anomalylog: "이상 이력",
   simulation: "시뮬레이션",
 };
 
@@ -631,6 +650,13 @@ async function setEquipmentStatus(id, status) {
   tick();
 }
 
+const PROCESS_CATEGORY_LABEL = {
+  ETCH: "식각 (ETCH)",
+  CVD: "박막 증착 (CVD)",
+  CMP: "평탄화 (CMP)",
+  INSPECT: "검사 (INSPECT)",
+};
+
 function renderEquipment(list) {
   const total = list.length;
   const running = list.filter(e => e.status === "RUN").length;
@@ -652,18 +678,25 @@ function renderEquipment(list) {
     (byStep[eq.process_step] ??= []).push(eq);
   }
   const order = PROCESS_ROUTE.filter(s => byStep[s]);
-  document.getElementById("equipment").innerHTML = order.flatMap(step => byStep[step]).map(eq => `
-    <div class="eq">
-      <div class="name">${eq.name}</div>
-      <div class="step">${eq.process_step}</div>
-      ${badge(eq.status)}
-      <div class="meta">가동 ${eq.run_seconds.toFixed(0)}s · 배정 ${eq.dispatch_count}회</div>
-      <div class="ctl">
-        <button onclick="setEquipmentStatus(${eq.id}, 'RUN')">RUN</button>
-        <button onclick="setEquipmentStatus(${eq.id}, 'IDLE')">IDLE</button>
-        <button onclick="setEquipmentStatus(${eq.id}, 'DOWN')">DOWN</button>
+  document.getElementById("equipment-categories").innerHTML = order.map(step => `
+    <section class="block">
+      <h3>${PROCESS_CATEGORY_LABEL[step] || step} · ${byStep[step].length}대</h3>
+      <div class="grid">
+        ${byStep[step].map(eq => `
+          <div class="eq" data-clickable onclick="openEquipmentDrawer(${eq.id})">
+            <div class="name">${eq.name}</div>
+            <div class="step">${eq.process_step}</div>
+            ${badge(eq.status)}
+            <div class="meta">가동 ${eq.run_seconds.toFixed(0)}s · 배정 ${eq.dispatch_count}회</div>
+            <div class="ctl" onclick="event.stopPropagation()">
+              <button onclick="setEquipmentStatus(${eq.id}, 'RUN')">RUN</button>
+              <button onclick="setEquipmentStatus(${eq.id}, 'IDLE')">IDLE</button>
+              <button onclick="setEquipmentStatus(${eq.id}, 'DOWN')">DOWN</button>
+            </div>
+          </div>
+        `).join("")}
       </div>
-    </div>
+    </section>
   `).join("");
 }
 
@@ -756,6 +789,7 @@ function renderLots(list) {
 document.getElementById("lot-filter").addEventListener("change", () => tick());
 
 async function openLotDrawer(lotId) {
+  selectedEquipmentId = null;
   selectedLotId = lotId;
   await renderLotDrawer();
 }
@@ -792,6 +826,63 @@ async function renderLotDrawer() {
       <h3>로트 #${lot.id}</h3>
       <div class="page-desc">${lot.product} · 수량 ${lot.quantity} · 스텝 ${lot.step_index} ${badge(lot.status)}</div>
       <h3 style="margin-top:16px;font-size:.85rem;">이벤트 타임라인</h3>
+      <div class="timeline">${timeline}</div>
+    </div>
+  `;
+}
+
+/* ---------------- equipment drawer ---------------- */
+async function openEquipmentDrawer(equipmentId) {
+  selectedLotId = null;
+  selectedEquipmentId = equipmentId;
+  await renderEquipmentDrawer();
+}
+
+function closeEquipmentDrawer() {
+  selectedEquipmentId = null;
+  document.getElementById("drawer-root").innerHTML = "";
+}
+
+async function renderEquipmentDrawer() {
+  if (!selectedEquipmentId) return;
+  let eq, events;
+  try {
+    const [allEquipment, eventList] = await Promise.all([
+      getJSON("/equipment"),
+      getJSON(`/equipment/${selectedEquipmentId}/events`),
+    ]);
+    eq = allEquipment.find(e => e.id === selectedEquipmentId);
+    events = eventList;
+    if (!eq) throw new Error("equipment not found");
+  } catch (err) {
+    closeEquipmentDrawer();
+    return;
+  }
+
+  const timeline = events.map(ev => `
+    <div class="timeline-item">
+      <div class="t">${new Date(ev.occurred_at).toLocaleString("ko-KR")}</div>
+      <div class="e">로트 #${ev.lot_id} · ${ev.event_type}${ev.process_step ? " · " + ev.process_step : ""}</div>
+      <div>${ev.from_status ?? "—"} → ${ev.to_status}</div>
+    </div>
+  `).join("") || `<div class="empty">기록된 로그 없음</div>`;
+
+  document.getElementById("drawer-root").innerHTML = `
+    <div class="drawer-overlay" onclick="closeEquipmentDrawer()"></div>
+    <div class="drawer">
+      <button class="close" onclick="closeEquipmentDrawer()">✕</button>
+      <h3>${eq.name}</h3>
+      <div class="page-desc">${PROCESS_CATEGORY_LABEL[eq.process_step] || eq.process_step} ${badge(eq.status)}</div>
+      <div class="cards" style="margin-top:14px;">
+        <div class="card"><div class="label">누적 가동시간</div><div class="value">${eq.run_seconds.toFixed(0)}s</div></div>
+        <div class="card"><div class="label">배정 횟수</div><div class="value">${eq.dispatch_count}</div></div>
+      </div>
+      <div style="display:flex; gap:6px; margin:4px 0 16px;">
+        <button class="btn" onclick="setEquipmentStatus(${eq.id}, 'RUN')">RUN</button>
+        <button class="btn" onclick="setEquipmentStatus(${eq.id}, 'IDLE')">IDLE</button>
+        <button class="btn bad" onclick="setEquipmentStatus(${eq.id}, 'DOWN')">DOWN</button>
+      </div>
+      <h3 style="font-size:.85rem;">설비 로그 (최근 100건, 공정 진행 + 품질검사)</h3>
       <div class="timeline">${timeline}</div>
     </div>
   `;
@@ -844,16 +935,39 @@ function renderAnomalies(report) {
     </table>`;
 }
 
+/* ---------------- anomaly log (persisted history) ---------------- */
+function renderAnomalyLog(rows) {
+  const thead = "<tr><th>감지 시각</th><th>심각도</th><th>설비</th><th>공정</th><th>불량률</th><th>동료평균</th><th>Z-score</th><th>표본수</th></tr>";
+  const body = rows.map(r => `
+    <tr>
+      <td>${new Date(r.detected_at).toLocaleString("ko-KR")}</td>
+      <td><span class="sev-dot ${r.severity}"></span>${r.severity}</td>
+      <td>${r.equipment_name}</td>
+      <td>${r.process_step}</td>
+      <td>${(r.defect_rate * 100).toFixed(1)}%</td>
+      <td>${(r.peer_mean_rate * 100).toFixed(1)}%</td>
+      <td>${r.z_score != null ? r.z_score : "-"}</td>
+      <td>${r.total_inspections}</td>
+    </tr>
+  `).join("");
+  document.getElementById("anomaly-log-wrap").innerHTML = `
+    <table>
+      <thead>${thead}</thead>
+      <tbody>${body || `<tr><td class="empty" colspan="8">아직 기록된 이상 없음 — 시뮬레이션이 30초마다 자동으로 검사합니다.</td></tr>`}</tbody>
+    </table>`;
+}
+
 /* ---------------- main poll loop ---------------- */
 async function tick() {
   try {
-    const [metrics, equipment, workOrders, lots, quality, anomalies, sim] = await Promise.all([
+    const [metrics, equipment, workOrders, lots, quality, anomalies, anomalyLog, sim] = await Promise.all([
       getJSON("/metrics"),
       getJSON("/equipment"),
       getJSON("/work-orders"),
       getJSON("/lots"),
       getJSON("/quality/metrics"),
       getJSON("/quality/anomalies"),
+      getJSON("/quality/anomaly-log"),
       getJSON("/simulation/status"),
     ]);
     renderCards(metrics, quality);
@@ -864,7 +978,9 @@ async function tick() {
     renderLots(lots);
     renderQuality(quality);
     renderAnomalies(anomalies);
+    renderAnomalyLog(anomalyLog);
     if (selectedLotId) await renderLotDrawer();
+    if (selectedEquipmentId) await renderEquipmentDrawer();
     document.getElementById("conn-dot").title = "연결됨 · " + new Date().toLocaleTimeString("ko-KR");
     document.getElementById("conn-dot").classList.remove("off");
   } catch (err) {

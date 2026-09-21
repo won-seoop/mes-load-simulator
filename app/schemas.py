@@ -176,6 +176,24 @@ class QualityAnomalyReportOut(BaseModel):
     anomalies: list[EquipmentQualityAnomalyOut]
 
 
+class AnomalyLogOut(BaseModel):
+    id: int
+    detected_at: datetime
+    equipment_id: int
+    equipment_name: str
+    process_step: str
+    severity: str
+    defect_rate: float
+    peer_mean_rate: float
+    z_score: Optional[float]
+    total_inspections: int
+    method: str
+    note: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
 class MetricsOut(BaseModel):
     wip_count: int
     completed_today: int

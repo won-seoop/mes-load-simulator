@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import (
     PROCESS_ROUTE,
+    AnomalyLog,
     Equipment,
     EquipmentStatus,
     InspectionResult,
@@ -26,6 +27,7 @@ from app.models import (
     WorkOrderStatus,
 )
 from app.schemas import (
+    AnomalyLogOut,
     EquipmentOut,
     EquipmentQualityAnomalyOut,
     EquipmentStatusUpdate,
@@ -396,6 +398,24 @@ def list_work_order_lots(work_order_id: int, db: Session = Depends(get_db)):
 @app.get("/equipment", response_model=list[EquipmentOut])
 def list_equipment(db: Session = Depends(get_db)):
     return db.query(Equipment).all()
+
+
+@app.get("/equipment/{equipment_id}/events", response_model=list[LotEventOut])
+def list_equipment_events(equipment_id: int, db: Session = Depends(get_db)):
+    """Recent lot events this equipment appears in — process dispatches and,
+    for INSPECT tools, the quality events recorded with its equipment_id too
+    (inspect_lot/disposition_lot pass the inspecting tool's id through) —
+    so one feed covers both a station's process activity and its defect
+    history without a second endpoint."""
+    if not db.get(Equipment, equipment_id):
+        raise HTTPException(404, "equipment not found")
+    return (
+        db.query(LotEvent)
+        .filter(LotEvent.equipment_id == equipment_id)
+        .order_by(LotEvent.occurred_at.desc())
+        .limit(100)
+        .all()
+    )
 
 
 @app.patch("/equipment/{equipment_id}/status", response_model=EquipmentOut)
@@ -855,13 +875,18 @@ def quality_metrics(db: Session = Depends(get_db)):
     )
 
 
-@app.get("/quality/anomalies", response_model=QualityAnomalyReportOut)
-def quality_anomalies(db: Session = Depends(get_db)):
+ANOMALY_METHOD = "same-process peer defect-rate comparison"
+
+
+def _detect_quality_anomalies(db: Session) -> list[EquipmentQualityAnomalyOut]:
     """Detect equipment-correlated quality shifts using transparent peer statistics.
 
     This deterministic baseline deliberately stays outside an LLM. An agent may
     explain and investigate these results, but the underlying counts, rates and
-    thresholds remain reproducible from inspection records.
+    thresholds remain reproducible from inspection records. Shared by the
+    /quality/anomalies endpoint and the simulation engine's periodic check
+    that persists findings to AnomalyLog, so both always agree on what counts
+    as an anomaly.
     """
     rows = (
         db.query(
@@ -933,13 +958,34 @@ def quality_anomalies(db: Session = Depends(get_db)):
         )
 
     anomalies.sort(key=lambda item: item.rate_delta, reverse=True)
+    return anomalies
+
+
+@app.get("/quality/anomalies", response_model=QualityAnomalyReportOut)
+def quality_anomalies(db: Session = Depends(get_db)):
     return QualityAnomalyReportOut(
         generated_at=datetime.utcnow(),
-        method="same-process peer defect-rate comparison",
+        method=ANOMALY_METHOD,
         minimum_inspections=ANOMALY_MIN_INSPECTIONS,
         minimum_rate_delta=ANOMALY_MIN_RATE_DELTA,
         minimum_z_score=ANOMALY_MIN_Z_SCORE,
-        anomalies=anomalies,
+        anomalies=_detect_quality_anomalies(db),
+    )
+
+
+@app.get("/quality/anomaly-log", response_model=list[AnomalyLogOut])
+def quality_anomaly_log(db: Session = Depends(get_db)):
+    """Persisted history of anomalies the system has detected over time —
+    unlike /quality/anomalies (a live snapshot recomputed on every request
+    and forgotten immediately after), these rows are written once each time
+    the simulation engine's periodic check finds a *new* anomaly (throttled
+    per equipment), so this is what answers "when did this first show up."
+    """
+    return (
+        db.query(AnomalyLog)
+        .order_by(AnomalyLog.detected_at.desc())
+        .limit(100)
+        .all()
     )
 
 
