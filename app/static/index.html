@@ -198,40 +198,50 @@
   .timeline-item .t { color: var(--muted); font-size: 0.66rem; }
   .timeline-item .e { font-weight: 700; margin: 2px 0; }
 
+  /* ---------- bottom tab bar (phone nav) ---------- */
+  .bottom-nav {
+    display: none;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    background: var(--sidebar); border-top: 1px solid var(--border);
+    padding: 4px 2px calc(4px + env(safe-area-inset-bottom, 0px));
+  }
+  .bottom-nav .nav-item {
+    flex-direction: column; gap: 2px; padding: 6px 2px;
+    font-size: 0.62rem; border-radius: 10px; text-align: center;
+  }
+  .bottom-nav .nav-item .ic { font-size: 1.05rem; width: auto; }
+  .bottom-nav .nav-item .lb { line-height: 1; }
+
   /* ---------- responsive: tablet / phone ---------- */
   @media (max-width: 760px) {
     .app-shell { flex-direction: column; }
     .sidebar {
       width: 100%; height: auto; position: sticky; top: 0; z-index: 10;
-      flex-direction: row; align-items: center; border-right: none; border-bottom: 1px solid var(--border);
+      border-right: none; border-bottom: 1px solid var(--border);
     }
+    .sidebar .nav { display: none; }
     .brand { border-bottom: none; padding: 8px 10px; }
     .brand-sub { display: none; }
-    .nav {
-      flex-direction: row; overflow-x: auto; -webkit-overflow-scrolling: touch;
-      padding: 6px; flex: 1; scrollbar-width: none;
-    }
-    .nav::-webkit-scrollbar { display: none; }
-    .nav-item { flex: none; white-space: nowrap; padding: 8px 10px; font-size: 0.78rem; }
     .sidebar-footer { display: none; }
+    .bottom-nav { display: flex; }
+    .bottom-nav .nav-item { flex: 1; }
     .topbar { padding: 0 12px; height: 44px; }
     .topbar-title { font-size: 0.85rem; }
     .topbar-right { gap: 8px; }
-    .content { padding: 10px; }
+    .content { padding: 10px; padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
     .cards { grid-template-columns: repeat(2, 1fr); gap: 6px; }
     .card .value { font-size: 1.15rem; }
     .grid { grid-template-columns: repeat(2, 1fr); }
     .flow { flex-wrap: wrap; }
     .flow-step { flex: 1 1 30%; min-width: 70px; }
     .form-grid { grid-template-columns: 1fr 1fr; }
-    .drawer { width: 100%; }
+    .drawer { width: 100%; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
     th, td { padding: 6px 7px; font-size: 0.72rem; }
   }
 
   @media (max-width: 420px) {
     .cards, .grid { grid-template-columns: repeat(2, 1fr); }
     .brand-name { font-size: 0.78rem; }
-    .nav-item .ic { font-size: 0.85rem; }
     .sim-controls { gap: 6px; }
     .btn { padding: 6px 10px; font-size: 0.75rem; }
   }
@@ -409,6 +419,15 @@
     </div>
   </div>
 
+  <nav class="bottom-nav" id="bottom-nav">
+    <button class="nav-item active" data-view="overview"><span class="ic">📊</span><span class="lb">대시보드</span></button>
+    <button class="nav-item" data-view="equipment"><span class="ic">⚙️</span><span class="lb">설비</span></button>
+    <button class="nav-item" data-view="workorders"><span class="ic">📋</span><span class="lb">작업지시</span></button>
+    <button class="nav-item" data-view="lots"><span class="ic">📦</span><span class="lb">로트</span></button>
+    <button class="nav-item" data-view="quality"><span class="ic">🔬</span><span class="lb">품질</span></button>
+    <button class="nav-item" data-view="simulation"><span class="ic">▶</span><span class="lb">시뮬</span></button>
+  </nav>
+
   <div id="drawer-root"></div>
 
 <script>
@@ -446,7 +465,7 @@ function switchView(view) {
   document.getElementById("view-title").textContent = VIEW_TITLES[view] || view;
 }
 
-document.getElementById("nav").addEventListener("click", e => {
+document.addEventListener("click", e => {
   const btn = e.target.closest(".nav-item");
   if (btn) switchView(btn.dataset.view);
 });
