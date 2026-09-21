@@ -154,6 +154,20 @@
       새 작업지시 생성→Release→시뮬레이션 시작→로트 진행→검사 이벤트가 타임라인 드로어에 그대로
       찍히는 것까지 curl로 전 구간 직접 확인했고, 백엔드 로직은 손대지 않아 pytest 72개 그대로
       통과한다.
+- [x] (2026-09-21) HOLD 로트가 마지막 공정에서 영원히 멈추는 버그 수정. 자율 시뮬레이션 엔진을
+      껐다 켜지 않고 108분(tick 6495)간 무인으로 돌려봤더니, INSPECT에서 설비다운으로 HOLD된
+      로트가 복구 후 완료(QUALITY_HOLD)로 못 넘어가는 상태전이 누락(`ALLOWED_LOT_TRANSITIONS[HOLD]`가
+      `{PROCESSING}`만 허용) 때문에 `ensure_lot_transition`이 매 tick `ValueError`를 던졌다. 그런데
+      `_advance_due_lots`가 `HTTPException`만 잡고 있어서 이 예외가 tick 전체를 abort시켰고, 실패한
+      로트가 재스케줄되지 않아 다음 tick에도 또 맨 먼저 실패해 같은 tick의 나머지 로트까지 전부
+      막았다 — 그 결과 ETCH에 로트 26개가 쌓이고 완료는 0건인 채로 멈춰 있었다. `state_machine.py`에
+      `HOLD → QUALITY_HOLD`를 추가하고, `simulation.py`의 예외 처리를 로트 단위로 격리(다른 예외도
+      잡아서 서버 로그+대시보드 이벤트 피드에 남기고 15초 백오프로 재스케줄)하도록 고쳤다. 회귀
+      테스트 2건 추가(마지막 공정 HOLD→QUALITY_HOLD 전이, 고장 로트가 tick 내 다른 로트를 막지
+      않는지 몽키패치 합성 실패로 검증) — pytest 72→74. 재기동 후 80 tick(~80초) 동안 완료 39건·
+      에러 0건으로 정상 동작 확인. 5분 헬스체크 루프가 uvicorn 로그만 grep해서 이 버그를 못 잡았던
+      관측 공백도 함께 드러나서(시뮬레이션 예외가 메모리 이벤트 피드에만 있었음) 서버 로그에도
+      남기도록 고쳤다(Notion "07. PAR Experience" PAR-007 참고).
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
@@ -181,6 +195,10 @@
 - [ ] CI(`ci.yml`)에 ruff(lint/format)와 `pytest-cov` 커버리지 리포트 단계 추가 — 지금은
       테스트 통과 여부만 보고 코드 스타일이나 커버리지는 확인하지 않음
 - [ ] Pydantic class Config와 FastAPI `on_event` deprecation warning 제거
+- [ ] 헬스체크가 uvicorn stdout/stderr 로그(Traceback/500)뿐 아니라 `/simulation/status`의
+      `recent_events`에서 반복되는 "⚠️" 패턴도 함께 감지하도록 확장 — PAR-007에서 tick을 통째로
+      멈추게 한 예외가 서버 로그에는 전혀 안 남고 시뮬레이션 메모리 이벤트 피드에만 기록되던
+      관측 공백을 로그 출력 추가로 일부 메웠지만, 적극적으로 그 패턴을 찾아 알려주는 건 아직 없음
 
 ## 에이전트 작업 원칙
 
