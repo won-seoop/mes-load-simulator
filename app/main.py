@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
+from pathlib import Path
 from statistics import mean, pstdev
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -983,3 +985,13 @@ def metrics(db: Session = Depends(get_db)):
         throughput_per_hour=throughput,
         **hold_wait,
     )
+
+
+# Mounted last so it only serves paths no API route above already claimed
+# (Starlette tries routes in registration order, first match wins) — the
+# static dashboard reads live data from the JSON endpoints above via fetch().
+app.mount(
+    "/",
+    StaticFiles(directory=Path(__file__).parent / "static", html=True),
+    name="dashboard",
+)

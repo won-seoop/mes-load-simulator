@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MES Operator Dashboard</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0b1220;
+    --panel: #121a2b;
+    --panel-2: #17233a;
+    --border: #24314d;
+    --text: #e6ecf7;
+    --muted: #8ea0c2;
+    --accent: #4f8cff;
+    --good: #3ddc84;
+    --warn: #ffb545;
+    --bad: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+    padding-bottom: 48px;
+  }
+  h1 { font-size: 1.1rem; margin: 0 0 2px; }
+  .sub { color: var(--muted); font-size: 0.8rem; margin-bottom: 16px; }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .card .label { color: var(--muted); font-size: 0.72rem; }
+  .card .value { font-size: 1.35rem; font-weight: 600; margin-top: 2px; }
+  section { margin-bottom: 24px; }
+  section h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 6px;
+  }
+  .eq {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px;
+    font-size: 0.75rem;
+  }
+  .eq .name { font-weight: 600; }
+  .eq .step { color: var(--muted); }
+  .badge {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    margin-top: 4px;
+  }
+  .badge.RUN, .badge.DONE, .badge.RELEASED, .badge.IN_PROGRESS, .badge.COMPLETED { background: rgba(61,220,132,.15); color: var(--good); }
+  .badge.IDLE, .badge.WAITING, .badge.CREATED, .badge.PROCESSING { background: rgba(79,140,255,.15); color: var(--accent); }
+  .badge.DOWN, .badge.HOLD, .badge.QUALITY_HOLD, .badge.SCRAPPED { background: rgba(255,92,92,.15); color: var(--bad); }
+  .badge.REWORK { background: rgba(255,181,69,.15); color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 0.7rem; text-transform: uppercase; }
+  .table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .empty { color: var(--muted); font-size: 0.8rem; padding: 10px; }
+  .anomaly { border-left: 3px solid var(--bad); background: var(--panel-2); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; font-size: 0.78rem; }
+  .anomaly.WATCH { border-left-color: var(--warn); }
+  .anomaly .sev { font-weight: 700; margin-right: 6px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; }
+  .dot.off { background: var(--bad); }
+  #status { font-size: 0.72rem; color: var(--muted); }
+</style>
+</head>
+<body>
+  <h1>MES Operator Dashboard</h1>
+  <div class="sub"><span class="dot" id="conn-dot"></span><span id="status">연결 확인 중…</span></div>
+
+  <div class="cards" id="cards"></div>
+
+  <section>
+    <h2>설비 (Equipment)</h2>
+    <div class="grid" id="equipment"></div>
+  </section>
+
+  <section>
+    <h2>작업지시 (Work Orders)</h2>
+    <div class="table-wrap"><table id="work-orders"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <section>
+    <h2>최근 로트 (Lots)</h2>
+    <div class="table-wrap"><table id="lots"><thead></thead><tbody></tbody></table></div>
+  </section>
+
+  <section>
+    <h2>품질 이상 (Quality Anomalies)</h2>
+    <div id="anomalies"></div>
+  </section>
+
+<script>
+const REFRESH_MS = 4000;
+
+async function getJSON(path) {
+  const res = await fetch(path, { cache: "no-store" });
+  if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
+  return res.json();
+}
+
+function badge(value) {
+  return `<span class="badge ${value}">${value}</span>`;
+}
+
+function renderCards(metrics, quality) {
+  const items = [
+    ["WIP", metrics.wip_count],
+    ["완료(오늘)", metrics.completed_today],
+    ["시간당 처리량", metrics.throughput_per_hour],
+    ["수율", (metrics.yield_rate * 100).toFixed(1) + "%"],
+    ["평균 사이클(s)", metrics.avg_cycle_time_seconds ?? "-"],
+    ["HOLD 중", metrics.lots_on_hold_count],
+    ["1차 합격률", quality ? (quality.first_pass_yield * 100).toFixed(1) + "%" : "-"],
+    ["불량률", quality ? (quality.defect_rate * 100).toFixed(1) + "%" : "-"],
+  ];
+  document.getElementById("cards").innerHTML = items.map(
+    ([label, value]) => `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`
+  ).join("");
+}
+
+function renderEquipment(list) {
+  document.getElementById("equipment").innerHTML = list.map(eq => `
+    <div class="eq">
+      <div class="name">${eq.name}</div>
+      <div class="step">${eq.process_step}</div>
+      ${badge(eq.status)}
+    </div>
+  `).join("");
+}
+
+function renderWorkOrders(list) {
+  const thead = "<tr><th>주문번호</th><th>제품</th><th>계획</th><th>투입</th><th>완료</th><th>상태</th></tr>";
+  const rows = list.slice(0, 20).map(w => `
+    <tr>
+      <td>${w.order_no}</td>
+      <td>${w.product_code}</td>
+      <td>${w.planned_quantity}</td>
+      <td>${w.released_quantity}</td>
+      <td>${w.completed_quantity}</td>
+      <td>${badge(w.status)}</td>
+    </tr>
+  `).join("");
+  document.querySelector("#work-orders thead").innerHTML = thead;
+  document.querySelector("#work-orders tbody").innerHTML = rows || "";
+  if (!list.length) {
+    document.querySelector("#work-orders tbody").innerHTML =
+      `<tr><td class="empty" colspan="6">작업지시 없음</td></tr>`;
+  }
+}
+
+function renderLots(list) {
+  const thead = "<tr><th>ID</th><th>제품</th><th>스텝</th><th>상태</th><th>수량</th></tr>";
+  const rows = list.slice(0, 25).map(l => `
+    <tr>
+      <td>#${l.id}</td>
+      <td>${l.product}</td>
+      <td>${l.step_index}</td>
+      <td>${badge(l.status)}</td>
+      <td>${l.quantity}</td>
+    </tr>
+  `).join("");
+  document.querySelector("#lots thead").innerHTML = thead;
+  document.querySelector("#lots tbody").innerHTML = rows || `<tr><td class="empty" colspan="5">로트 없음</td></tr>`;
+}
+
+function renderAnomalies(report) {
+  const el = document.getElementById("anomalies");
+  const anomalies = report.anomalies || [];
+  if (!anomalies.length) {
+    el.innerHTML = `<div class="empty">감지된 이상 없음 (${report.method || ""})</div>`;
+    return;
+  }
+  el.innerHTML = anomalies.map(a => `
+    <div class="anomaly ${a.severity}">
+      <span class="sev">${a.severity}</span>${a.equipment_name} (${a.process_step}) —
+      불량률 ${(a.defect_rate * 100).toFixed(1)}% vs 동료 평균 ${(a.peer_mean_rate * 100).toFixed(1)}%
+      (n=${a.total_inspections}${a.z_score != null ? `, z=${a.z_score}` : ""})
+    </div>
+  `).join("");
+}
+
+async function tick() {
+  try {
+    const [metrics, equipment, workOrders, lots, quality, anomalies] = await Promise.all([
+      getJSON("/metrics"),
+      getJSON("/equipment"),
+      getJSON("/work-orders"),
+      getJSON("/lots"),
+      getJSON("/quality/metrics"),
+      getJSON("/quality/anomalies"),
+    ]);
+    renderCards(metrics, quality);
+    renderEquipment(equipment);
+    renderWorkOrders(workOrders);
+    renderLots(lots);
+    renderAnomalies(anomalies);
+    document.getElementById("status").textContent = "연결됨 · " + new Date().toLocaleTimeString("ko-KR");
+    document.getElementById("conn-dot").classList.remove("off");
+  } catch (err) {
+    document.getElementById("status").textContent = "연결 실패: " + err.message;
+    document.getElementById("conn-dot").classList.add("off");
+  }
+}
+
+tick();
+setInterval(tick, REFRESH_MS);
+</script>
+</body>
+</html>
