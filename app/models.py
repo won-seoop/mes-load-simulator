@@ -95,8 +95,10 @@ class Equipment(Base):
     process_step = Column(String, index=True)
     status = Column(Enum(EquipmentStatus), default=EquipmentStatus.IDLE)
     run_seconds: Mapped[float] = Column(Float, default=0.0)
+    down_seconds: Mapped[float] = Column(Float, default=0.0)
     dispatch_count = Column(Integer, nullable=False, default=0)
     last_status_change = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Lot(Base):

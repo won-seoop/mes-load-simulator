@@ -162,6 +162,13 @@ def main():
         md.append(
             f"- Avg resolved HOLD wait (s): {mes_metrics.get('avg_resolved_hold_seconds')}"
         )
+        md.append(
+            f"- OEE (Availability x Performance x Quality): "
+            f"{mes_metrics.get('oee')}"
+            f" (Availability={mes_metrics.get('oee_availability')}, "
+            f"Performance={mes_metrics.get('oee_performance')}, "
+            f"Quality={mes_metrics.get('oee_quality')})"
+        )
     else:
         md.append("- (no data)")
 

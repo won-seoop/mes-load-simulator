@@ -33,7 +33,8 @@ Samsung SDS Nexplant MES가 다루는 도메인 개념(설비 가동률, 로트/
 - `GET/POST /lots/{id}/inspections`, `POST /lots/{id}/quality-disposition`
 - `POST /lots/{id}/rework-release`
 - `GET /quality/metrics`, `GET /quality/anomalies`
-- `GET /metrics` — WIP, 완료 수, 수율, 평균 사이클타임, 설비 가동률, 시간당 처리량
+- `GET /metrics` — WIP, 완료 수, 수율, 평균 사이클타임, 설비 가동률, 시간당 처리량, OEE
+  (Availability x Performance x Quality, `docs/decisions/ADR-007-*.md` 참고)
 
 ## Local run
 

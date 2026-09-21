@@ -1,0 +1,87 @@
+{
+  "date": "2026-09-22",
+  "load_test": {
+    "requests": 17200,
+    "failures": 0,
+    "failure_rate": 0.0,
+    "rps": 95.88298659873583,
+    "p95_ms": 66.0,
+    "p99_ms": 160.0,
+    "avg_ms": 21.126808339593165,
+    "business_conflicts": 48,
+    "server_5xx": 0,
+    "integrity_errors": 0
+  },
+  "mes_metrics": {
+    "wip_count": 2394,
+    "completed_today": 203,
+    "scrap_count": 0,
+    "yield_rate": 1.0,
+    "avg_cycle_time_seconds": 19.0,
+    "equipment_utilization": {
+      "ETCH-01": 177.4,
+      "ETCH-02": 178.0,
+      "ETCH-03": 176.3,
+      "CVD-01": 178.2,
+      "CVD-02": 177.8,
+      "CVD-03": 177.1,
+      "CMP-01": 178.0,
+      "CMP-02": 175.8,
+      "CMP-03": 174.4,
+      "INSPECT-01": 174.5,
+      "INSPECT-02": 174.1,
+      "INSPECT-03": 166.9
+    },
+    "throughput_per_hour": 203.0,
+    "lots_on_hold_count": 0,
+    "longest_current_hold_seconds": null,
+    "avg_resolved_hold_seconds": null,
+    "oee_availability": 0.9954,
+    "oee_performance": 1.0,
+    "oee_quality": 1.0,
+    "oee": 0.9954
+  },
+  "mes_metrics_peak_during_run": {
+    "sample_count": 18,
+    "peak_lots_on_hold_count": 0,
+    "peak_longest_hold_seconds": null
+  },
+  "quality_metrics": {
+    "total_inspections": 224,
+    "pass_count": 203,
+    "fail_count": 21,
+    "defect_rate": 0.0938,
+    "first_pass_yield": 0.9054,
+    "scrap_count": 0,
+    "rework_count": 21,
+    "rework_rate": 0.0946,
+    "defects_by_process": {
+      "INSPECT": 21
+    },
+    "defects_by_equipment": {
+      "INSPECT-03": 21
+    }
+  },
+  "quality_anomalies": {
+    "generated_at": "2026-09-21T22:21:13.749637",
+    "method": "same-process peer defect-rate comparison",
+    "minimum_inspections": 10,
+    "minimum_rate_delta": 0.1,
+    "minimum_z_score": 2.0,
+    "anomalies": [
+      {
+        "equipment_id": 12,
+        "equipment_name": "INSPECT-03",
+        "process_step": "INSPECT",
+        "total_inspections": 74,
+        "fail_count": 21,
+        "defect_rate": 0.2838,
+        "peer_mean_rate": 0.0,
+        "peer_stddev": 0.0,
+        "z_score": null,
+        "rate_delta": 0.2838,
+        "severity": "WARNING"
+      }
+    ]
+  }
+}

@@ -183,6 +183,25 @@
       똑같이 영향받고 있었는데 그동안 아무도(사람도, 이전 스크린샷 검증도) 실제로 닫기 버튼을 눌러본
       적이 없어서 몰랐다. `.drawer`/`.drawer-overlay` z-index를 50/51로 올려 고쳤다. 회귀 테스트 4건
       추가(설비 이벤트 조회 범위·404, 이상 신규 저장·중복 억제) — pytest 74→78.
+- [x] (2026-09-22) OEE(설비종합효율 = Availability x Performance x Quality) 계산을 추가했다.
+      지금까지는 `equipment_utilization`(누적 RUN 시간)만 있어서 "이 설비가 얼마나 오래
+      돌았는지"는 보여도 "얼마나 효율적으로 돌았는지"는 알 수 없었다. Equipment에 `run_seconds`와
+      대칭인 `down_seconds`(DOWN 상태를 벗어날 때 `set_equipment_status`에서 flush, 기존
+      `run_seconds` 패턴 그대로 재사용)와 `created_at`을 추가해 Availability = 1 -
+      (DOWN 시간 / 설비 생성 이후 전체 경과시간)으로 계산했다(IDLE은 "작업 대기"이지 "고장"이
+      아니므로 가용시간에 포함, DOWN만 손실로 계산). Performance = 목표 Cycle Time(자율
+      시뮬레이션 엔진의 `step_dwell_min/max_seconds`(6~14s) 중간값 10s, 이 프로젝트에 존재하는
+      유일한 "설계 목표 처리시간") x 배정횟수 / 실제 가동시간으로 계산하고 1.0으로 캡핑했다(표준
+      OEE 관례 — 100% 초과는 "설비가 더 빠르다"가 아니라 "목표시간 가정이 느슨하다"는 뜻).
+      Quality는 설비별로 조작해내지 않고(검사 합/불 데이터는 INSPECT 설비에만 존재) 기존
+      `yield_rate`를 그대로 재사용해 공장 전체 수준에서만 3요소 OEE를 계산했다 — 설비별
+      응답(`GET /equipment`)에는 Availability/Performance만 노출하고 "OEE"라는 이름은 붙이지
+      않았다. 데이터가 없으면(한 번도 배정된 적 없는 설비) 0이 아니라 `None`을 반환해서 지어낸
+      숫자를 노출하지 않는다. 단위테스트 11개(가동률/성능 각 공식, DOWN 시간 flush, `/metrics`·
+      `/equipment` 응답 배선) 추가로 pytest 78→89, 50 VU/3분 파이프라인 재확인(실패율 0%, RPS
+      95.88, p95 66ms/p99 160ms, Server 5xx/IntegrityError 0, 측정된 OEE
+      Availability=0.9954/Performance=1.0(캡핑됨)/Quality=1.0). 대시보드 개요 카드와 설비
+      드릴다운 드로어에도 노출했다.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
@@ -190,8 +209,14 @@
 - [ ] C# UI LOT 검색/Event Timeline과 Work Order 상세 화면
 - [ ] 품질 이상 신호에서 관련 LOT/검사/Event 자동 Drill-down
 - [ ] PostgreSQL 전환 후 조건부 UPDATE vs `SELECT FOR UPDATE` 동시성 비교
-- [ ] OEE(설비종합효율 = 가동률 x 성능 x 양품률) 지표 계산 및 `/metrics`에 추가
-- [ ] 설비 다운타임/알람 이벤트 모델 (DOWN 상태 발생·복구 이력 기록)
+- [ ] 설비 다운타임/알람 이벤트 모델 (DOWN 상태 발생·복구 이력 기록 — `down_seconds` 누적값은
+      2026-09-22에 추가했지만 "언제, 얼마나, 왜(알람 사유) DOWN이었는지"의 개별 이력은 아직 없다.
+      OEE Availability의 분자/분모를 사후 검증하거나 MTBF/MTTR을 계산하려면 개별 DOWN
+      구간(시작/종료/사유) 이력이 필요하다.)
+- [ ] Performance 계산에 쓰는 목표 Cycle Time(현재 시뮬레이션 dwell 설정 중간값 10s로 고정)을
+      공정 스텝별로 다르게 설정하거나, 실제 `PROCESS_STARTED` 이벤트를 추가해 측정된 실제
+      평균 처리시간과 비교하는 것으로 고도화 (현재 이벤트 저널에는 `PROCESS_COMPLETED`만 있고
+      공정 시작 시점을 별도로 기록하지 않아 "설계 목표"와 "실측값"을 나란히 비교할 수 없다)
 - [ ] 전일 대비 이상 탐지 고도화 (단순 임계치 대신 최근 N일 평균/표준편차 기반)
 - [ ] Locust 우선순위 로트/배치 사이즈 변화 시나리오 (설비 랜덤 다운은 2026-09-21에 추가 완료)
 - [ ] 같은 공정 스텝의 설비를 한꺼번에 묶어 내리는 "스텝 전체 다운" Fault 추가 — 현재의 개별 설비

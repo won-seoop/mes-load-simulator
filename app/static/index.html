@@ -567,6 +567,7 @@ function renderCards(metrics, quality) {
     ["완료(오늘)", metrics.completed_today],
     ["시간당 처리량", metrics.throughput_per_hour],
     ["수율", (metrics.yield_rate * 100).toFixed(1) + "%"],
+    ["OEE", metrics.oee != null ? (metrics.oee * 100).toFixed(1) + "%" : "-"],
     ["평균 사이클(s)", metrics.avg_cycle_time_seconds ?? "-"],
     ["HOLD 중", metrics.lots_on_hold_count],
     ["1차 합격률", quality ? (quality.first_pass_yield * 100).toFixed(1) + "%" : "-"],
@@ -688,6 +689,7 @@ function renderEquipment(list) {
             <div class="step">${eq.process_step}</div>
             ${badge(eq.status)}
             <div class="meta">가동 ${eq.run_seconds.toFixed(0)}s · 배정 ${eq.dispatch_count}회</div>
+            <div class="meta">가동률 ${(eq.availability * 100).toFixed(1)}% · 성능 ${eq.performance != null ? (eq.performance * 100).toFixed(1) + "%" : "-"}</div>
             <div class="ctl" onclick="event.stopPropagation()">
               <button onclick="setEquipmentStatus(${eq.id}, 'RUN')">RUN</button>
               <button onclick="setEquipmentStatus(${eq.id}, 'IDLE')">IDLE</button>
@@ -876,6 +878,8 @@ async function renderEquipmentDrawer() {
       <div class="cards" style="margin-top:14px;">
         <div class="card"><div class="label">누적 가동시간</div><div class="value">${eq.run_seconds.toFixed(0)}s</div></div>
         <div class="card"><div class="label">배정 횟수</div><div class="value">${eq.dispatch_count}</div></div>
+        <div class="card"><div class="label">가동률(Availability)</div><div class="value">${(eq.availability * 100).toFixed(1)}%</div></div>
+        <div class="card"><div class="label">성능(Performance)</div><div class="value">${eq.performance != null ? (eq.performance * 100).toFixed(1) + "%" : "-"}</div></div>
       </div>
       <div style="display:flex; gap:6px; margin:4px 0 16px;">
         <button class="btn" onclick="setEquipmentStatus(${eq.id}, 'RUN')">RUN</button>

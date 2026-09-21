@@ -39,6 +39,15 @@ class EquipmentOut(BaseModel):
     status: EquipmentStatus
     run_seconds: float
     dispatch_count: int
+    # OEE Availability for this equipment alone (see app.main._equipment_oee).
+    # Performance is None until the tool has completed at least one dispatch
+    # with nonzero elapsed run time — there is nothing to measure yet.
+    # Quality is deliberately not attributed per-equipment: only inspection
+    # stations produce pass/fail data, so a per-tool quality number would be
+    # fabricated for the other three steps. Full three-factor OEE is only
+    # computed at the factory level in /metrics.
+    availability: Optional[float] = None
+    performance: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -205,3 +214,11 @@ class MetricsOut(BaseModel):
     lots_on_hold_count: int
     longest_current_hold_seconds: Optional[float]
     avg_resolved_hold_seconds: Optional[float]
+    # OEE = Availability x Performance x Quality, averaged across equipment
+    # (see app.main._equipment_oee for the per-equipment formulas and the
+    # denominators/window each factor uses). None while there isn't enough
+    # data yet (e.g. nothing has been dispatched) rather than a fabricated 0.
+    oee_availability: Optional[float]
+    oee_performance: Optional[float]
+    oee_quality: float
+    oee: Optional[float]

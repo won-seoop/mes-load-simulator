@@ -115,6 +115,59 @@ def _effective_run_seconds(eq: Equipment, now: datetime) -> float:
     return eq.run_seconds
 
 
+def _effective_down_seconds(eq: Equipment, now: datetime) -> float:
+    """down_seconds plus any time accrued in the current DOWN stretch that
+    hasn't been flushed yet. Mirrors _effective_run_seconds."""
+    if eq.status == EquipmentStatus.DOWN:
+        return eq.down_seconds + (now - eq.last_status_change).total_seconds()
+    return eq.down_seconds
+
+
+# OEE Performance = Ideal Cycle Time x Count / Run Time. This project has no
+# real fab process spec, so "ideal" is the midpoint of the autonomous
+# simulation engine's configured per-step dwell time
+# (SimulationConfig.step_dwell_{min,max}_seconds, default 6-14s) — the one
+# place a designed target cycle time exists here. It is a designed target,
+# not a measured real-world spec, and Locust-driven advances (which have no
+# dwell timer) are compared against the same target for consistency.
+OEE_IDEAL_CYCLE_SECONDS = 10.0
+
+
+def _equipment_oee(eq: Equipment, now: datetime) -> dict:
+    """Availability and Performance for one piece of equipment.
+
+    Availability = (Total Time - Down Time) / Total Time, where Total Time is
+    wall-clock time since this equipment row was created (the only "planned
+    production time" this simulator has — there is no shift schedule). This
+    treats IDLE (no work queued) as available time and only DOWN as an
+    availability loss, matching how DOWN is used elsewhere as "broken", not
+    "waiting for work".
+
+    Performance = Ideal Cycle Time x dispatch_count / effective run time,
+    capped at 1.0 (a ratio over 100% means the ideal-cycle assumption is too
+    slow for this run, not that the tool is genuinely beating its rated
+    speed — standard OEE convention caps it rather than reporting >100%).
+
+    Quality is intentionally not computed here — see EquipmentOut.
+    """
+    run = _effective_run_seconds(eq, now)
+    down = _effective_down_seconds(eq, now)
+    total_elapsed = (now - eq.created_at).total_seconds()
+
+    availability = None
+    if total_elapsed > 0:
+        availability = max(0.0, min(1.0, 1.0 - down / total_elapsed))
+
+    performance = None
+    if run > 0 and eq.dispatch_count > 0:
+        performance = max(0.0, min(1.0, OEE_IDEAL_CYCLE_SECONDS * eq.dispatch_count / run))
+
+    return {
+        "availability": round(availability, 4) if availability is not None else None,
+        "performance": round(performance, 4) if performance is not None else None,
+    }
+
+
 def _equipment_hold_wait_metrics(db: Session, now: datetime) -> dict:
     """How long lots actually wait in equipment-down HOLD, from the event journal.
 
@@ -397,7 +450,19 @@ def list_work_order_lots(work_order_id: int, db: Session = Depends(get_db)):
 
 @app.get("/equipment", response_model=list[EquipmentOut])
 def list_equipment(db: Session = Depends(get_db)):
-    return db.query(Equipment).all()
+    now = datetime.utcnow()
+    return [
+        EquipmentOut(
+            id=eq.id,
+            name=eq.name,
+            process_step=eq.process_step,
+            status=eq.status,
+            run_seconds=eq.run_seconds,
+            dispatch_count=eq.dispatch_count,
+            **_equipment_oee(eq, now),
+        )
+        for eq in db.query(Equipment).all()
+    ]
 
 
 @app.get("/equipment/{equipment_id}/events", response_model=list[LotEventOut])
@@ -428,6 +493,8 @@ def set_equipment_status(
     now = datetime.utcnow()
     if eq.status == EquipmentStatus.RUN:
         eq.run_seconds += (now - eq.last_status_change).total_seconds()
+    elif eq.status == EquipmentStatus.DOWN:
+        eq.down_seconds += (now - eq.last_status_change).total_seconds()
     eq.status = body.status
     eq.last_status_change = now
     db.commit()
@@ -1014,13 +1081,32 @@ def metrics(db: Session = Depends(get_db)):
     )
 
     now = datetime.utcnow()
+    all_equipment = db.query(Equipment).all()
     equipment_utilization = {
-        eq.name: round(_effective_run_seconds(eq, now), 1) for eq in db.query(Equipment).all()
+        eq.name: round(_effective_run_seconds(eq, now), 1) for eq in all_equipment
     }
 
     window_start = datetime.utcnow() - timedelta(hours=1)
     throughput = completed_today_q.filter(Lot.completed_at >= window_start).count()
     hold_wait = _equipment_hold_wait_metrics(db, now)
+
+    # Factory-level OEE = Availability x Performance x Quality. Availability
+    # and Performance are the unweighted mean across all equipment (see
+    # _equipment_oee for each factor's formula and denominator); Quality
+    # reuses yield_rate above (good lots / (good + scrapped)), the only
+    # accept/reject signal this simulator has. None propagates rather than
+    # being treated as 0 when a factor has no data yet.
+    oee_components = [_equipment_oee(eq, now) for eq in all_equipment]
+    avail_values = [c["availability"] for c in oee_components if c["availability"] is not None]
+    perf_values = [c["performance"] for c in oee_components if c["performance"] is not None]
+    oee_availability = round(mean(avail_values), 4) if avail_values else None
+    oee_performance = round(mean(perf_values), 4) if perf_values else None
+    oee_quality = round(yield_rate, 4)
+    oee = (
+        round(oee_availability * oee_performance * oee_quality, 4)
+        if oee_availability is not None and oee_performance is not None
+        else None
+    )
 
     return MetricsOut(
         wip_count=wip_count,
@@ -1030,6 +1116,10 @@ def metrics(db: Session = Depends(get_db)):
         avg_cycle_time_seconds=round(avg_cycle, 1) if avg_cycle is not None else None,
         equipment_utilization=equipment_utilization,
         throughput_per_hour=throughput,
+        oee_availability=oee_availability,
+        oee_performance=oee_performance,
+        oee_quality=oee_quality,
+        oee=oee,
         **hold_wait,
     )
 
