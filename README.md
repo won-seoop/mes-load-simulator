@@ -2,6 +2,11 @@
 
 [![CI](https://github.com/won-seoop/mes-load-simulator/actions/workflows/ci.yml/badge.svg)](https://github.com/won-seoop/mes-load-simulator/actions/workflows/ci.yml)
 
+
+<img width="1280" height="825" alt="image" src="https://github.com/user-attachments/assets/3f6dc00f-0556-48f3-9372-a2079345a6d8" />
+
+
+
 > 프로젝트의 개발 원칙, Nexplant MES 공개 자료와 자체 구현의 구분, 단계별 실험·검증 방식은
 > [`CLAUDE.md`](CLAUDE.md)를 기준으로 합니다.
 
