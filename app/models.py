@@ -140,6 +140,28 @@ class LotEvent(Base):
     occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
 
+class EquipmentDowntimeEvent(Base):
+    """One DOWN stretch for one piece of equipment: when it started, when (if
+    ever) it ended, and why.
+
+    ``Equipment.down_seconds`` only ever holds a running total, so it cannot
+    answer "how many times has this tool gone down" or "how long did each
+    individual outage last" — both are needed for MTBF/MTTR and for auditing
+    that the running total itself is right. ``ended_at``/``duration_seconds``
+    stay NULL while the outage is still open (mirrors LotEvent's open/closed
+    HOLD pairing in _equipment_hold_wait_metrics).
+    """
+
+    __tablename__ = "equipment_downtime_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=False, index=True)
+    reason = Column(String, nullable=False)
+    started_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    ended_at = Column(DateTime, nullable=True)
+    duration_seconds = Column(Float, nullable=True)
+
+
 class WorkOrderLot(Base):
     __tablename__ = "work_order_lots"
     __table_args__ = (UniqueConstraint("lot_id", name="uq_work_order_lot_lot_id"),)

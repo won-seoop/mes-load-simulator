@@ -80,6 +80,18 @@ def main():
         if quality_anomalies_file.exists()
         else {}
     )
+    equipment_file = raw_dir / "equipment.json"
+    equipment = json.loads(equipment_file.read_text()) if equipment_file.exists() else []
+    # MTBF/MTTR are None until a tool has logged at least one DOWN event
+    # (see app.main._equipment_reliability) — only equipment that actually
+    # failed during this run has real numbers here, so a quiet run can
+    # legitimately show none.
+    mttr_by_equipment = {
+        eq["name"]: eq["mttr_seconds"] for eq in equipment if eq.get("mttr_seconds") is not None
+    }
+    mtbf_by_equipment = {
+        eq["name"]: eq["mtbf_seconds"] for eq in equipment if eq.get("mtbf_seconds") is not None
+    }
 
     summary = {
         "date": run_date,
@@ -92,6 +104,13 @@ def main():
         },
         "quality_metrics": quality_metrics,
         "quality_anomalies": quality_anomalies,
+        "equipment_reliability": {
+            "equipment_with_recorded_failures": len(
+                [eq for eq in equipment if eq.get("mtbf_seconds") is not None or eq.get("mttr_seconds") is not None]
+            ),
+            "mttr_seconds_by_equipment": mttr_by_equipment,
+            "mtbf_seconds_by_equipment": mtbf_by_equipment,
+        },
     }
 
     reports_dir = Path("reports")
@@ -169,6 +188,18 @@ def main():
             f"Performance={mes_metrics.get('oee_performance')}, "
             f"Quality={mes_metrics.get('oee_quality')})"
         )
+    else:
+        md.append("- (no data)")
+
+    md.append("")
+    md.append("## Equipment Reliability (MTBF/MTTR)")
+    if equipment:
+        md.append(
+            f"- Equipment with recorded failures: "
+            f"{summary['equipment_reliability']['equipment_with_recorded_failures']}/{len(equipment)}"
+        )
+        md.append(f"- MTTR by equipment (s): {mttr_by_equipment}")
+        md.append(f"- MTBF by equipment (s): {mtbf_by_equipment}")
     else:
         md.append("- (no data)")
 

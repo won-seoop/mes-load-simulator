@@ -183,7 +183,7 @@ class MesUser(HttpUser):
         target = random.choice(candidates)
         self.client.patch(
             f"/equipment/{target['id']}/status",
-            json={"status": "DOWN"},
+            json={"status": "DOWN", "reason": "FAULT_INJECTION"},
             name="/equipment/[id]/status [fault: down]",
         )
 

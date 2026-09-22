@@ -175,7 +175,9 @@ class SimulationEngine:
             if random.random() >= self._config.equipment_down_probability_per_tick:
                 continue
             mes_main.set_equipment_status(
-                eq.id, mes_main.EquipmentStatusUpdate(status=EquipmentStatus.DOWN), db=db
+                eq.id,
+                mes_main.EquipmentStatusUpdate(status=EquipmentStatus.DOWN, reason="RANDOM_FAULT"),
+                db=db,
             )
             recovery = random.uniform(
                 self._config.equipment_down_min_seconds,

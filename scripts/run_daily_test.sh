@@ -86,6 +86,7 @@ kill "$SAMPLER_PID" 2>/dev/null || true
 curl -s "$LOAD_HOST/metrics" -o "$RAW_DIR/mes_metrics.json"
 curl -s "$LOAD_HOST/quality/metrics" -o "$RAW_DIR/quality_metrics.json"
 curl -s "$LOAD_HOST/quality/anomalies" -o "$RAW_DIR/quality_anomalies.json"
+curl -s "$LOAD_HOST/equipment" -o "$RAW_DIR/equipment.json"
 
 kill "$SERVER_PID" 2>/dev/null || true
 trap - EXIT

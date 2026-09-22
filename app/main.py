@@ -13,6 +13,7 @@ from app.models import (
     PROCESS_ROUTE,
     AnomalyLog,
     Equipment,
+    EquipmentDowntimeEvent,
     EquipmentStatus,
     InspectionResult,
     Lot,
@@ -28,6 +29,7 @@ from app.models import (
 )
 from app.schemas import (
     AnomalyLogOut,
+    EquipmentDowntimeEventOut,
     EquipmentOut,
     EquipmentQualityAnomalyOut,
     EquipmentStatusUpdate,
@@ -166,6 +168,43 @@ def _equipment_oee(eq: Equipment, now: datetime) -> dict:
         "availability": round(availability, 4) if availability is not None else None,
         "performance": round(performance, 4) if performance is not None else None,
     }
+
+
+DEFAULT_DOWNTIME_REASON = "MANUAL"
+
+
+def _equipment_reliability(db: Session, eq: Equipment, now: datetime) -> dict:
+    """MTBF/MTTR computed from EquipmentDowntimeEvent, this tool's own
+    DOWN-stretch history rather than a re-derivation of down_seconds.
+
+    MTTR (Mean Time To Repair) = mean duration_seconds across this
+    equipment's *closed* downtime events. None if none have closed yet.
+
+    MTBF (Mean Time Between Failures) = (total elapsed time since this
+    equipment row was created - total down time) / number of failures,
+    i.e. mean uptime stretch per failure over the tool's whole life. Uses
+    the same total-elapsed/down-time denominators as Availability in
+    _equipment_oee, so the two stay comparable. None if there is no
+    failure yet, or if the tool has been down its entire life (denominator
+    would be <= 0).
+    """
+    events = (
+        db.query(EquipmentDowntimeEvent)
+        .filter(EquipmentDowntimeEvent.equipment_id == eq.id)
+        .all()
+    )
+    if not events:
+        return {"mtbf_seconds": None, "mttr_seconds": None}
+
+    closed_durations = [e.duration_seconds for e in events if e.duration_seconds is not None]
+    mttr = round(mean(closed_durations), 1) if closed_durations else None
+
+    total_elapsed = (now - eq.created_at).total_seconds()
+    down = _effective_down_seconds(eq, now)
+    uptime = total_elapsed - down
+    mtbf = round(uptime / len(events), 1) if uptime > 0 else None
+
+    return {"mtbf_seconds": mtbf, "mttr_seconds": mttr}
 
 
 def _equipment_hold_wait_metrics(db: Session, now: datetime) -> dict:
@@ -460,9 +499,27 @@ def list_equipment(db: Session = Depends(get_db)):
             run_seconds=eq.run_seconds,
             dispatch_count=eq.dispatch_count,
             **_equipment_oee(eq, now),
+            **_equipment_reliability(db, eq, now),
         )
         for eq in db.query(Equipment).all()
     ]
+
+
+@app.get("/equipment/{equipment_id}/downtime", response_model=list[EquipmentDowntimeEventOut])
+def list_equipment_downtime(equipment_id: int, db: Session = Depends(get_db)):
+    """Individual DOWN stretches for one tool (start/end/reason), most recent
+    first — the per-outage history that Equipment.down_seconds' running total
+    cannot show. Backs MTBF/MTTR (see _equipment_reliability) and lets a
+    reader audit that total against the sum of these rows."""
+    if not db.get(Equipment, equipment_id):
+        raise HTTPException(404, "equipment not found")
+    return (
+        db.query(EquipmentDowntimeEvent)
+        .filter(EquipmentDowntimeEvent.equipment_id == equipment_id)
+        .order_by(EquipmentDowntimeEvent.started_at.desc())
+        .limit(100)
+        .all()
+    )
 
 
 @app.get("/equipment/{equipment_id}/events", response_model=list[LotEventOut])
@@ -491,10 +548,36 @@ def set_equipment_status(
     if not eq:
         raise HTTPException(404, "equipment not found")
     now = datetime.utcnow()
+    was_down = eq.status == EquipmentStatus.DOWN
     if eq.status == EquipmentStatus.RUN:
         eq.run_seconds += (now - eq.last_status_change).total_seconds()
     elif eq.status == EquipmentStatus.DOWN:
         eq.down_seconds += (now - eq.last_status_change).total_seconds()
+
+    entering_down = body.status == EquipmentStatus.DOWN and not was_down
+    leaving_down = was_down and body.status != EquipmentStatus.DOWN
+    if entering_down:
+        db.add(
+            EquipmentDowntimeEvent(
+                equipment_id=eq.id,
+                reason=body.reason or DEFAULT_DOWNTIME_REASON,
+                started_at=now,
+            )
+        )
+    elif leaving_down:
+        open_event = (
+            db.query(EquipmentDowntimeEvent)
+            .filter(
+                EquipmentDowntimeEvent.equipment_id == eq.id,
+                EquipmentDowntimeEvent.ended_at.is_(None),
+            )
+            .order_by(EquipmentDowntimeEvent.started_at.desc())
+            .first()
+        )
+        if open_event:
+            open_event.ended_at = now
+            open_event.duration_seconds = (now - open_event.started_at).total_seconds()
+
     eq.status = body.status
     eq.last_status_change = now
     db.commit()

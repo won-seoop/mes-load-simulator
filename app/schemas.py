@@ -48,6 +48,10 @@ class EquipmentOut(BaseModel):
     # computed at the factory level in /metrics.
     availability: Optional[float] = None
     performance: Optional[float] = None
+    # MTBF/MTTR derived from EquipmentDowntimeEvent (see app.main._equipment_reliability).
+    # None until this tool has logged at least one DOWN event, not a fabricated 0.
+    mtbf_seconds: Optional[float] = None
+    mttr_seconds: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -55,6 +59,22 @@ class EquipmentOut(BaseModel):
 
 class EquipmentStatusUpdate(BaseModel):
     status: EquipmentStatus
+    # Who/what caused this transition (e.g. "RANDOM_FAULT" from the
+    # autonomous simulation, "FAULT_INJECTION" from Locust). Defaults to
+    # "MANUAL" for operator/dashboard-initiated calls that omit it.
+    reason: Optional[str] = None
+
+
+class EquipmentDowntimeEventOut(BaseModel):
+    id: int
+    equipment_id: int
+    reason: str
+    started_at: datetime
+    ended_at: Optional[datetime]
+    duration_seconds: Optional[float]
+
+    class Config:
+        from_attributes = True
 
 
 class LotCreate(BaseModel):

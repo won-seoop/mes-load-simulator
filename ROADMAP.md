@@ -202,6 +202,30 @@
       95.88, p95 66ms/p99 160ms, Server 5xx/IntegrityError 0, 측정된 OEE
       Availability=0.9954/Performance=1.0(캡핑됨)/Quality=1.0). 대시보드 개요 카드와 설비
       드릴다운 드로어에도 노출했다.
+- [x] (2026-09-23) 설비 다운타임 이벤트 모델과 MTBF/MTTR 계산 추가. 어제 추가한 OEE
+      Availability는 `Equipment.down_seconds` 누적값만 썼는데, 이 값은 총합만 있어서 "몇 번
+      고장났는지", "각 고장이 얼마나 걸렸는지", "왜(수동 조작인지 랜덤 Fault인지 Locust Fault
+      Injection인지) DOWN이었는지"를 사후에 감사할 방법이 없었다(어제 리포트의 "다음 후보"에
+      남겨둔 문제). `EquipmentDowntimeEvent` 테이블(equipment_id, reason, started_at, ended_at,
+      duration_seconds)을 추가해 `set_equipment_status`가 DOWN으로 들어갈 때 행을 열고 DOWN을
+      벗어날 때 그 설비의 열린 행을 닫도록 했다(같은 DOWN 상태에서 중복 PATCH가 와도 이미 열린
+      행이 있으면 새로 열지 않음 — 회귀 테스트로 고정). `app.main._equipment_reliability`가 이
+      이력으로 MTTR(닫힌 다운타임 duration의 평균)과 MTBF((총 경과시간 - 총 다운시간) / 고장
+      횟수, OEE Availability와 같은 분모를 재사용해 두 지표가 서로 어긋나지 않게 함)를 계산해
+      `GET /equipment` 응답과 새 `GET /equipment/{id}/downtime`(개별 다운타임 이력, 최신순)에
+      노출한다. 값이 없으면(아직 한 번도 고장난 적 없는 설비) 0이 아니라 `None`을 반환한다.
+      자율 시뮬레이션 엔진의 랜덤 Fault는 `reason="RANDOM_FAULT"`, Locust Fault Injection Task는
+      `reason="FAULT_INJECTION"`, 그 외 PATCH는 기본값 `reason="MANUAL"`로 태깅했다. 단위테스트
+      10건 추가(다운타임 행 열기/닫기, 중복 열기 방지, 엔드포인트 정렬·404, MTTR/MTBF 공식,
+      `/equipment` 응답 배선) — pytest 89→99, 전체 통과. `scripts/run_daily_test.sh`가 실행 끝에
+      `/equipment`도 스크랩하도록 하고 `summarize.py`에 "Equipment Reliability (MTBF/MTTR)" 절을
+      추가해, 50 VU/3분 재측정(실패율 0%, RPS 92.58, p95 190ms/p99 460ms, Server 5xx/IntegrityError 0)에서
+      Locust Fault Injection Task로 실제 12대 중 10대가 최소 1회 DOWN/복구를 겪어 MTTR
+      0.1~0.5초·MTBF 44.7~180.7초라는 실측값이 리포트에 찍히는 것까지 확인했다(MTTR이 매우
+      짧은 것은 실제 결함이 아니라 Locust의 `fault_recover_equipment` Task가 다음 반복에서
+      거의 즉시 그 설비를 골라 복구시키기 때문 — 이 부하 시나리오가 만드는 실제 패턴이며 지어낸
+      값이 아니다). 이 실행에서 INSPECT-03 불량률 33.33%(피어 평균 0%) CRITICAL 이상도
+      함께 관측했다(품질 이상 탐지 절 참고).
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
@@ -209,10 +233,9 @@
 - [ ] C# UI LOT 검색/Event Timeline과 Work Order 상세 화면
 - [ ] 품질 이상 신호에서 관련 LOT/검사/Event 자동 Drill-down
 - [ ] PostgreSQL 전환 후 조건부 UPDATE vs `SELECT FOR UPDATE` 동시성 비교
-- [ ] 설비 다운타임/알람 이벤트 모델 (DOWN 상태 발생·복구 이력 기록 — `down_seconds` 누적값은
-      2026-09-22에 추가했지만 "언제, 얼마나, 왜(알람 사유) DOWN이었는지"의 개별 이력은 아직 없다.
-      OEE Availability의 분자/분모를 사후 검증하거나 MTBF/MTTR을 계산하려면 개별 DOWN
-      구간(시작/종료/사유) 이력이 필요하다.)
+- [ ] `/metrics`에 설비별 MTBF/MTTR이 아니라 공장 전체 평균 MTBF/MTTR을 노출 (2026-09-23에
+      `GET /equipment`와 일일 리포트에는 추가했지만 대시보드 개요 카드에는 아직 없음 — 지금은
+      설비 상세 드릴다운을 열어야만 개별 값을 볼 수 있다)
 - [ ] Performance 계산에 쓰는 목표 Cycle Time(현재 시뮬레이션 dwell 설정 중간값 10s로 고정)을
       공정 스텝별로 다르게 설정하거나, 실제 `PROCESS_STARTED` 이벤트를 추가해 측정된 실제
       평균 처리시간과 비교하는 것으로 고도화 (현재 이벤트 저널에는 `PROCESS_COMPLETED`만 있고
