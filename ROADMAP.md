@@ -226,6 +226,35 @@
       거의 즉시 그 설비를 골라 복구시키기 때문 — 이 부하 시나리오가 만드는 실제 패턴이며 지어낸
       값이 아니다). 이 실행에서 INSPECT-03 불량률 33.33%(피어 평균 0%) CRITICAL 이상도
       함께 관측했다(품질 이상 탐지 절 참고).
+- [x] (2026-09-24) Locust에 스텝 전체 다운(whole-step) Fault Injection을 추가하고, 그 과정에서
+      HOLD 대기시간 지표가 실제로는 한 번도 관측되지 못하던 두 가지 원인을 찾아 함께 고쳤다.
+      먼저 `fault_inject_step_down` 태스크를 추가해 같은 공정 스텝의 설비 3대를 한꺼번에 DOWN시켰다
+      (`_STEP_DOWN_FIRED` 플래그로 프로세스당 1회만 발동 — gevent는 I/O에서만 그린렛을 전환하므로
+      플래그 확인 직후 I/O 전에 set하면 두 그린렛이 동시에 발동을 결정할 수 없다). 첫 실행에서
+      3대가 실제로 함께 DOWN되는 것은 확인했지만(`PATCH .../status [fault: step down]` 3건),
+      `/metrics` 10초 샘플링 18개 전부와 최종 응답 모두 `lots_on_hold_count=0`이었다 — 원인은
+      기존 `fault_recover_equipment` 태스크가 확률 Gate 없이 매번 임의의 DOWN 설비 1대를 즉시
+      복구시켜서(50명 동시 사용자 기준 초당 여러 번 선택됨) 3대 모두가 약 1초 내에 개별
+      복구되어(MTTR 0.1~0.7초로 이미 리포트에 찍혀 있던 값과 일치) 그 사이에 `/advance`가 그
+      스텝을 정확히 때린 적이 없었기 때문이다. `_down_since`(Locust 프로세스 자체가 그 설비를
+      DOWN시킨 시각)를 기록해 `fault_recover_equipment`가 `MIN_DOWN_DWELL_SECONDS=5`초 이상 지난
+      설비만 복구 대상으로 삼도록 바꿨다(대안 A: 서버 스키마에 `last_status_change` 노출 후
+      서버 계산에 맡기는 방법도 있었지만, 이번 문제는 Locust 시나리오의 타이밍 설계 문제이고
+      서버 스키마/마이그레이션까지 건드릴 필요가 없어 Locust 쪽 최소 수정을 선택했다). 재측정에서
+      HOLD가 처음으로 관측됐지만(`peak lots_on_hold=15`), 이번엔 실행 종료 시점까지 15건이 전혀
+      해소되지 않고(`avg_resolved_hold_seconds=None`) 남아 있는 새 문제를 발견했다 — 원인은
+      `advance_lot` 태스크가 `WAITING`/`PROCESSING` 상태만 조회해서 설비가 복구된 뒤에도 HOLD 로트를
+      다시 시도하는 호출이 전혀 없었기 때문이다(서버 `advance_lot`은 HOLD 로트 재시도를 이미
+      지원하고 있었음 — Locust 쪽 조회 누락). 상태 선택에 `HOLD`를 추가했더니(처음엔 균등 3분할)
+      HOLD 대기 로트가 해소되는 것(`avg_resolved_hold_seconds=4.1~11.0`)은 확인했지만 RPS가
+      93->86, 완료 로트가 ~200->142로 눈에 띄게 줄었다 — HOLD 리스트가 거의 항상 비어 있어서
+      3분의 1의 picks가 헛일이었기 때문이다. `random.choices(weights=[45,45,10])`로 HOLD 비중을
+      낮춰 재측정한 결과 RPS 90.79(기존 기준선 범위 내), 완료 179건, `peak lots_on_hold=28`,
+      `avg_resolved_hold_seconds=11.0`, 실행 종료 시점 HOLD 0건을 확인했다 — 부하 강도를 거의
+      깎지 않으면서 스텝 전체 다운/복구 사이클을 안정적으로 관측할 수 있게 됐다. pytest 99개
+      전체 통과(Locust 태스크 자체는 이전 Fault Injection 태스크들과 같은 이유로 pytest 대상이
+      아니라 `scripts/run_daily_test.sh` 전체 실행으로 검증), Server 5xx/IntegrityError 0,
+      실패율 0% 재확인.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
@@ -242,11 +271,11 @@
       공정 시작 시점을 별도로 기록하지 않아 "설계 목표"와 "실측값"을 나란히 비교할 수 없다)
 - [ ] 전일 대비 이상 탐지 고도화 (단순 임계치 대신 최근 N일 평균/표준편차 기반)
 - [ ] Locust 우선순위 로트/배치 사이즈 변화 시나리오 (설비 랜덤 다운은 2026-09-21에 추가 완료)
-- [ ] 같은 공정 스텝의 설비를 한꺼번에 묶어 내리는 "스텝 전체 다운" Fault 추가 — 현재의 개별 설비
-      독립 확률 다운(`FAULT_DOWN_PROBABILITY=0.05`)만으로는 3대가 동시에 모두 DOWN될 확률이 낮아
-      일일 부하테스트가 HOLD 대기시간 지표를 매번 실제로 관측하지 못한다(2026-09-21 리포트 참고).
-      이 Fault를 추가하면 회귀 테스트가 매 실행마다 최소 1회 이상 HOLD/복구 사이클을 안정적으로
-      재현할 수 있다.
+- [ ] `GET /equipment/{id}/downtime`/MTBF·MTTR 계산에 `reason`별 집계를 추가 (2026-09-24에
+      `STEP_FAULT_INJECTION`이라는 새 reason이 생겼지만, 지금 MTBF/MTTR과 일일 리포트는 설비별
+      총합만 보여줄 뿐 원인별(MANUAL/RANDOM_FAULT/FAULT_INJECTION/STEP_FAULT_INJECTION)로 나눠
+      보여주지 않는다 — "왜 DOWN이었는지"를 사후에 구분할 수 있으면 Fault Injection이 만든
+      다운타임과 실제 시뮬레이션 랜덤 고장을 분리해서 신뢰성 지표를 더 정확히 읽을 수 있다)
 - [ ] SQLite -> Postgres 전환 옵션 (docker-compose, 동시성 부하테스트에 더 현실적)
 - [ ] 일자별 트렌드를 보여주는 간단한 대시보드 (정적 HTML + Chart.js, reports/ 데이터를 읽어서 생성)
 - [ ] API 인증(JWT 또는 API key) 추가
