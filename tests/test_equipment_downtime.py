@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 from app.database import SessionLocal
-from app.main import _equipment_reliability
+from app.main import _downtime_by_reason, _equipment_reliability
 from app.models import Equipment, EquipmentDowntimeEvent, EquipmentStatus
 
 
@@ -197,6 +197,79 @@ def test_mtbf_uses_uptime_over_total_life_divided_by_failure_count(client, monke
         db.close()
     # total_elapsed=400, down=20+20=40, uptime=360, 2 failures -> 180s
     assert result["mtbf_seconds"] == 180.0
+
+
+def test_downtime_by_reason_is_empty_before_any_failure(client):
+    eq = _first_equipment(client)
+    db = SessionLocal()
+    try:
+        equipment = db.get(Equipment, eq["id"])
+        result = _downtime_by_reason(db, equipment)
+    finally:
+        db.close()
+    assert result == {}
+
+
+def test_downtime_by_reason_splits_totals_per_reason(client, monkeypatch):
+    """Same tool failing under two different reasons must not blend into one
+    MTTR — each reason keeps its own count/total/mean, which is the whole
+    point of separating Locust's fault injection from the simulation's own
+    random faults (see app.main._downtime_by_reason)."""
+    eq = _first_equipment(client)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    _freeze_time(monkeypatch, t0)
+    client.patch(f"/equipment/{eq['id']}/status", json={"status": "DOWN", "reason": "RANDOM_FAULT"})
+    _freeze_time(monkeypatch, t0 + timedelta(seconds=10))
+    client.patch(f"/equipment/{eq['id']}/status", json={"status": "IDLE"})
+
+    _freeze_time(monkeypatch, t0 + timedelta(seconds=100))
+    client.patch(f"/equipment/{eq['id']}/status", json={"status": "DOWN", "reason": "RANDOM_FAULT"})
+    _freeze_time(monkeypatch, t0 + timedelta(seconds=130))
+    client.patch(f"/equipment/{eq['id']}/status", json={"status": "IDLE"})
+
+    _freeze_time(monkeypatch, t0 + timedelta(seconds=200))
+    client.patch(
+        f"/equipment/{eq['id']}/status", json={"status": "DOWN", "reason": "STEP_FAULT_INJECTION"}
+    )
+    # left open on purpose to check `count` still includes an open stretch
+    # without it contributing to closed_count/total_seconds/mean_seconds.
+
+    db = SessionLocal()
+    try:
+        equipment = db.get(Equipment, eq["id"])
+        result = _downtime_by_reason(db, equipment)
+    finally:
+        db.close()
+
+    assert result["RANDOM_FAULT"] == {
+        "count": 2,
+        "closed_count": 2,
+        "total_seconds": 40.0,
+        "mean_seconds": 20.0,
+    }
+    assert result["STEP_FAULT_INJECTION"] == {
+        "count": 1,
+        "closed_count": 0,
+        "total_seconds": 0.0,
+        "mean_seconds": None,
+    }
+
+
+def test_equipment_list_exposes_downtime_by_reason(client, monkeypatch):
+    eq = _first_equipment(client)
+    t0 = datetime(2026, 1, 1, 12, 0, 0)
+    _freeze_time(monkeypatch, t0)
+    client.patch(f"/equipment/{eq['id']}/status", json={"status": "DOWN", "reason": "MANUAL"})
+    _freeze_time(monkeypatch, t0 + timedelta(seconds=5))
+    client.patch(f"/equipment/{eq['id']}/status", json={"status": "IDLE"})
+
+    body = next(e for e in client.get("/equipment").json() if e["id"] == eq["id"])
+    assert body["downtime_by_reason"]["MANUAL"] == {
+        "count": 1,
+        "closed_count": 1,
+        "total_seconds": 5.0,
+        "mean_seconds": 5.0,
+    }
 
 
 def test_equipment_endpoint_exposes_mtbf_and_mttr_fields(client):

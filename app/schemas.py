@@ -32,6 +32,18 @@ class ProductCreate(BaseModel):
     is_active: int = Field(default=1, ge=0, le=1)
 
 
+class EquipmentDowntimeReasonStats(BaseModel):
+    # How many DOWN stretches this equipment has logged for one `reason`
+    # value (e.g. "MANUAL", "RANDOM_FAULT", "FAULT_INJECTION",
+    # "STEP_FAULT_INJECTION"). `count` includes a currently-open stretch;
+    # `closed_count`/`total_seconds`/`mean_seconds` only cover closed ones,
+    # same convention as _equipment_reliability's MTTR.
+    count: int
+    closed_count: int
+    total_seconds: float
+    mean_seconds: Optional[float] = None
+
+
 class EquipmentOut(BaseModel):
     id: int
     name: str
@@ -52,6 +64,10 @@ class EquipmentOut(BaseModel):
     # None until this tool has logged at least one DOWN event, not a fabricated 0.
     mtbf_seconds: Optional[float] = None
     mttr_seconds: Optional[float] = None
+    # Same downtime history, split by `reason` (see app.main._downtime_by_reason),
+    # so a reader can separate synthetic fault injection from the simulation's
+    # own random failures instead of only seeing one blended MTBF/MTTR.
+    downtime_by_reason: dict[str, EquipmentDowntimeReasonStats] = {}
 
     class Config:
         from_attributes = True

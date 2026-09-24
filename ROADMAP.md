@@ -255,6 +255,25 @@
       전체 통과(Locust 태스크 자체는 이전 Fault Injection 태스크들과 같은 이유로 pytest 대상이
       아니라 `scripts/run_daily_test.sh` 전체 실행으로 검증), Server 5xx/IntegrityError 0,
       실패율 0% 재확인.
+- [x] (2026-09-25) `GET /equipment`/일일 리포트의 MTBF/MTTR을 `reason`별로 쪼개는
+      `_downtime_by_reason` 함수와 `EquipmentOut.downtime_by_reason` 필드를 추가해, 이제
+      "FAULT_INJECTION이 만든 다운타임"과 "RANDOM_FAULT/MANUAL이 만든 다운타임"을 설비별·
+      공장 전체별로 구분해서 볼 수 있다(`scripts/summarize.py`가 전 설비를 합산한
+      `downtime_seconds_by_reason`도 일일 리포트에 추가). 구현 직후 50 VU·3분 파이프라인으로
+      검증하다가 `GET /equipment [list]`의 p95가 기존 34ms 수준에서 510\\~600ms대로 뛰는 걸
+      발견했다 — 원인은 새 함수가 이미 `_equipment_reliability`가 설비당 한 번 조회하던
+      `EquipmentDowntimeEvent`를 설비당 한 번 더(총 두 번) 조회하고 있었기 때문이었다(N+1의
+      변형: 쿼리 자체는 O(N)이었지만 그 배수가 2배로 늘어난 것). `_downtime_events(db, id)`로
+      조회를 분리하고 `/equipment` 라우트가 설비마다 그 결과를 한 번만 가져와 두 함수
+      (`_equipment_reliability`, `_downtime_by_reason`)에 `events=` 인자로 재사용하도록
+      고쳐서, 라우트 하나당 설비별 다운타임 쿼리 횟수를 다시 1회로 되돌렸다. 고친 뒤 재측정한
+      `/equipment [list]` p95는 320ms로 낮아졌으나(중앙값은 94ms -> 33ms로 정상 범위 복귀),
+      이 세션에서 파이프라인을 여러 번 반복 실행한 뒤라 공유 컨테이너의 CPU 경합 가능성을
+      배제하지 못해 전체 Aggregated p95(240ms)가 여전히 최근 기준선(34\\~190ms) 상단에
+      있다 — 지어낸 결론을 내지 않고 그대로 기록한다. pytest 99 -> 102개(신규 3개: 실패
+      전 빈 값, reason별 분리, `/equipment` 응답 배선) 전체 통과, Server 5xx/IntegrityError 0,
+      실패율 0%. 회귀 방지를 위해 "설비당 반복 조회를 만들 때는 같은 쿼리를 두 번 부르고
+      있지 않은지 확인한다"는 교훈을 이 항목에 남긴다.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
@@ -271,11 +290,6 @@
       공정 시작 시점을 별도로 기록하지 않아 "설계 목표"와 "실측값"을 나란히 비교할 수 없다)
 - [ ] 전일 대비 이상 탐지 고도화 (단순 임계치 대신 최근 N일 평균/표준편차 기반)
 - [ ] Locust 우선순위 로트/배치 사이즈 변화 시나리오 (설비 랜덤 다운은 2026-09-21에 추가 완료)
-- [ ] `GET /equipment/{id}/downtime`/MTBF·MTTR 계산에 `reason`별 집계를 추가 (2026-09-24에
-      `STEP_FAULT_INJECTION`이라는 새 reason이 생겼지만, 지금 MTBF/MTTR과 일일 리포트는 설비별
-      총합만 보여줄 뿐 원인별(MANUAL/RANDOM_FAULT/FAULT_INJECTION/STEP_FAULT_INJECTION)로 나눠
-      보여주지 않는다 — "왜 DOWN이었는지"를 사후에 구분할 수 있으면 Fault Injection이 만든
-      다운타임과 실제 시뮬레이션 랜덤 고장을 분리해서 신뢰성 지표를 더 정확히 읽을 수 있다)
 - [ ] SQLite -> Postgres 전환 옵션 (docker-compose, 동시성 부하테스트에 더 현실적)
 - [ ] 일자별 트렌드를 보여주는 간단한 대시보드 (정적 HTML + Chart.js, reports/ 데이터를 읽어서 생성)
 - [ ] API 인증(JWT 또는 API key) 추가
@@ -291,6 +305,17 @@
       `recent_events`에서 반복되는 "⚠️" 패턴도 함께 감지하도록 확장 — PAR-007에서 tick을 통째로
       멈추게 한 예외가 서버 로그에는 전혀 안 남고 시뮬레이션 메모리 이벤트 피드에만 기록되던
       관측 공백을 로그 출력 추가로 일부 메웠지만, 적극적으로 그 패턴을 찾아 알려주는 건 아직 없음
+- [ ] `run_daily_test.sh`에 "포트/DB 파일이 이미 사용 중이면 즉시 실패"만 있고 "이전 실행이
+      아직 안 끝났으면 기다렸다 이어서 돈다" 옵션이 없다 — 2026-09-25 실행 중 같은 파이프라인을
+      두 번째로 띄웠다가 첫 번째가 쓰던 `mes.db`를 두 번째의 `rm -f mes.db`가 지워버려서
+      "attempt to write a readonly database" 500 에러가 대량 발생한 사고를 겪었다(PAR-006과
+      같은 유형의 실수 재발). 스크립트 시작 시 락 파일(`reports/raw/.run.lock`)을 만들어 이미
+      실행 중이면 그 사실을 명확히 에러로 알리고 종료하도록 방어 코드를 추가할 가치가 있다.
+- [ ] 2026-09-25 재측정에서 N+1 쿼리를 고친 뒤에도 `GET /equipment [list]` p95(320ms)와
+      전체 Aggregated p95(240ms)가 최근 기준선(34\\~190ms) 상단에 남아 있었다 — 같은 세션에서
+      파이프라인을 여러 번 반복 실행한 뒤라 공유 컨테이너 CPU 경합 때문일 가능성이 높지만
+      확인하지 못했다. 별도의 조용한 세션에서 한 번 더 50 VU·3분을 돌려 반복 재현되는지
+      확인하고, 재현되면 진짜 회귀로 조사한다.
 
 ## 에이전트 작업 원칙
 

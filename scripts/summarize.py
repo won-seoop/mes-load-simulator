@@ -92,6 +92,25 @@ def main():
     mtbf_by_equipment = {
         eq["name"]: eq["mtbf_seconds"] for eq in equipment if eq.get("mtbf_seconds") is not None
     }
+    # Factory-wide downtime totals grouped by `reason` (see
+    # app.main._downtime_by_reason), summed across every tool. This is what
+    # separates "Locust's own FAULT_INJECTION/STEP_FAULT_INJECTION tasks
+    # caused N seconds of DOWN this run" from "the simulation's RANDOM_FAULT
+    # caused M seconds" — the per-equipment MTBF/MTTR above blends both.
+    downtime_by_reason: dict[str, dict] = {}
+    for eq in equipment:
+        for reason, stats in (eq.get("downtime_by_reason") or {}).items():
+            agg = downtime_by_reason.setdefault(
+                reason, {"count": 0, "closed_count": 0, "total_seconds": 0.0}
+            )
+            agg["count"] += stats.get("count", 0)
+            agg["closed_count"] += stats.get("closed_count", 0)
+            agg["total_seconds"] += stats.get("total_seconds", 0.0)
+    for reason, agg in downtime_by_reason.items():
+        agg["total_seconds"] = round(agg["total_seconds"], 1)
+        agg["mean_seconds"] = (
+            round(agg["total_seconds"] / agg["closed_count"], 1) if agg["closed_count"] else None
+        )
 
     summary = {
         "date": run_date,
@@ -110,6 +129,7 @@ def main():
             ),
             "mttr_seconds_by_equipment": mttr_by_equipment,
             "mtbf_seconds_by_equipment": mtbf_by_equipment,
+            "downtime_seconds_by_reason": downtime_by_reason,
         },
     }
 
@@ -200,6 +220,7 @@ def main():
         )
         md.append(f"- MTTR by equipment (s): {mttr_by_equipment}")
         md.append(f"- MTBF by equipment (s): {mtbf_by_equipment}")
+        md.append(f"- Downtime by reason, factory-wide: {downtime_by_reason}")
     else:
         md.append("- (no data)")
 
