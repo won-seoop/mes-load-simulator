@@ -360,3 +360,9 @@
       공개 자료로 확인된 것: 공정 종류, 수백 단계 규모, SEMI E10 상태 분류와 MTBF/MTTR, cycle time = WIP/시작률(Little's law),
       수율 정의와 FPY(재작업 제외). 확인되지 않은 것: 단일 통과 경로, 12대/3대씩 구성, 도착 4초·공정 6~14초·WIP 40,
       고장 0.4%/초·수리 10~30초, 최소 dispatch 횟수 규칙, 불량률 10%, 재작업 1회 후 스크랩. 접근하지 못한 자료(ResearchGate 403 등)는 UNVERIFIED로 두었다.
+- [x] (2026-09-25) 라이브 재기동 시 `no such column: equipment.down_seconds`로 서버 기동 실패. 원인: 라이브 `mes.db`가
+      구버전 스키마였고 `create_all`은 없는 테이블만 만들 뿐 컬럼은 추가하지 않는다(마이그레이션 도구 없음, 테스트는 매번
+      새 DB라 못 잡음). 조치: `mes.db` 백업 후 nullable 컬럼 2개(`down_seconds`, `created_at`)만 `ALTER TABLE ADD COLUMN`,
+      모델과 대조해 다른 테이블 차이 없음 확인, 엔드포인트 6개 200 확인. DB 삭제·재생성은 데이터 손실이라 선택하지 않았다.
+      한계: 시작 시 스키마 차이 검사와 마이그레이션 도구(Alembic 등)는 아직 없다. 같은 일이 다시 생길 수 있다.
+      함께 `pytest.ini`(`testpaths = tests`)를 추가해 루트 `pytest`가 `agent_gateway/smoke_test.py`를 수집하지 않게 했다.
