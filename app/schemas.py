@@ -239,6 +239,58 @@ class AnomalyLogOut(BaseModel):
         from_attributes = True
 
 
+class ApprovalCreate(BaseModel):
+    source_agent: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=200)
+    proposal: str = Field(min_length=1, max_length=2000)
+    evidence: Optional[str] = Field(default=None, max_length=4000)
+    risk_level: str = "MEDIUM"
+    equipment_id: Optional[int] = None
+    dedupe_key: str = Field(min_length=1, max_length=200)
+    ttl_seconds: Optional[int] = Field(default=900, ge=1)
+
+
+class ApprovalDecision(BaseModel):
+    action: str
+    reason: Optional[str] = Field(default=None, max_length=500)
+    edited_proposal: Optional[str] = Field(default=None, max_length=2000)
+    decided_by: str = Field(default="operator", min_length=1, max_length=64)
+
+
+class ApprovalOut(BaseModel):
+    id: int
+    created_at: datetime
+    last_seen_at: datetime
+    expires_at: Optional[datetime]
+    status: str
+    risk_level: str
+    source_agent: str
+    title: str
+    proposal: str
+    evidence: Optional[str]
+    equipment_id: Optional[int]
+    dedupe_key: str
+    occurrence_count: int
+    decided_at: Optional[datetime]
+    decided_by: Optional[str]
+    decision_reason: Optional[str]
+    edited_proposal: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class ApprovalSummaryOut(BaseModel):
+    pending_count: int
+    oldest_pending_age_seconds: Optional[float]
+    pending_by_risk: dict[str, int]
+    decided_total: int
+    approved_total: int
+    rejected_total: int
+    expired_total: int
+    edited_total: int
+
+
 class MetricsOut(BaseModel):
     wip_count: int
     completed_today: int

@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped
 
 from app.database import Base
@@ -48,6 +48,20 @@ class QualityDisposition(str, enum.Enum):
     PENDING = "PENDING"
     SCRAP = "SCRAP"
     REWORK = "REWORK"
+
+
+class ApprovalStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+
+
+class ApprovalRisk(str, enum.Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
 
 
 class WorkOrderStatus(str, enum.Enum):
@@ -218,3 +232,34 @@ class AnomalyLog(Base):
     total_inspections = Column(Integer, nullable=False)
     method = Column(String, nullable=False)
     note = Column(String, nullable=True)
+
+
+class ApprovalRequest(Base):
+    """A proposed action waiting for a human decision (Human-in-the-Loop queue).
+
+    Agents only *propose*; nothing here executes anything. Three columns exist
+    specifically so the queue does not pile up on the operator: `risk_level`
+    (sort/filter what matters), `dedupe_key` + `occurrence_count` (the same
+    standing problem is one row that counts up, not N rows), and `expires_at`
+    (a stale proposal expires instead of waiting forever).
+    """
+
+    __tablename__ = "approval_request"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True, index=True)
+    status = Column(String, nullable=False, default=ApprovalStatus.PENDING.value, index=True)
+    risk_level = Column(String, nullable=False, default=ApprovalRisk.MEDIUM.value, index=True)
+    source_agent = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    proposal = Column(Text, nullable=False)
+    evidence = Column(Text, nullable=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=True, index=True)
+    dedupe_key = Column(String, nullable=False, index=True)
+    occurrence_count = Column(Integer, nullable=False, default=1)
+    decided_at = Column(DateTime, nullable=True)
+    decided_by = Column(String, nullable=True)
+    decision_reason = Column(String, nullable=True)
+    edited_proposal = Column(Text, nullable=True)

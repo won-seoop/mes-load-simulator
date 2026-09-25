@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger("app.simulation")
 
+from app import approvals as approvals_service
 from app.database import SessionLocal
 from app.models import (
     AnomalyLog,
@@ -208,6 +209,7 @@ class SimulationEngine:
         self._next_anomaly_check_at = now + timedelta(seconds=ANOMALY_CHECK_INTERVAL_SECONDS)
 
         for anomaly in mes_main._detect_quality_anomalies(db):
+            self._propose_action(db, anomaly, now)
             suppress_since = now - timedelta(seconds=ANOMALY_LOG_SUPPRESS_SECONDS)
             recent = (
                 db.query(AnomalyLog)
@@ -239,6 +241,34 @@ class SimulationEngine:
                 f"{anomaly.severity} — 불량률 {anomaly.defect_rate * 100:.1f}% "
                 f"vs 동료 {anomaly.peer_mean_rate * 100:.1f}%"
             )
+
+    # WATCH is left to the anomaly log; only WARNING/CRITICAL ask a human.
+    _APPROVAL_RISK_BY_SEVERITY = {"WARNING": "HIGH", "CRITICAL": "CRITICAL"}
+
+    def _propose_action(self, db: Session, anomaly, now: datetime) -> None:
+        """Rule-based baseline 'quality agent': turn a detected anomaly into an
+        approval request. A standing anomaly folds into one row (dedupe_key per
+        equipment) rather than producing one request per detection cycle."""
+        risk = self._APPROVAL_RISK_BY_SEVERITY.get(anomaly.severity)
+        if risk is None:
+            return
+        z = f"{anomaly.z_score:.2f}" if anomaly.z_score is not None else "N/A"
+        approvals_service.upsert_request(
+            db,
+            source_agent="rule:quality-anomaly",
+            title=f"{anomaly.equipment_name} 품질 이상 ({anomaly.process_step})",
+            proposal=f"{anomaly.equipment_name} 신규 배정을 중지하고 점검한다",
+            evidence=(
+                f"불량률 {anomaly.defect_rate * 100:.1f}% vs 동일 공정 동료 평균 "
+                f"{anomaly.peer_mean_rate * 100:.1f}% · z-score {z} · "
+                f"검사 {anomaly.total_inspections}건"
+            ),
+            risk_level=risk,
+            equipment_id=anomaly.equipment_id,
+            dedupe_key=f"quality-anomaly:{anomaly.equipment_id}",
+            ttl_seconds=900,
+            now=now,
+        )
 
     # -- lot arrivals -----------------------------------------------------
     def _maybe_spawn_lot(self, db: Session, now: datetime, mes_main) -> None:

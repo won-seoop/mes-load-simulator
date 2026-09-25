@@ -2,16 +2,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean, pstdev
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import case, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import approvals as approvals_service
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import (
     PROCESS_ROUTE,
     AnomalyLog,
+    ApprovalRequest,
     Equipment,
     EquipmentDowntimeEvent,
     EquipmentStatus,
@@ -29,6 +31,10 @@ from app.models import (
 )
 from app.schemas import (
     AnomalyLogOut,
+    ApprovalCreate,
+    ApprovalDecision,
+    ApprovalOut,
+    ApprovalSummaryOut,
     EquipmentDowntimeEventOut,
     EquipmentOut,
     EquipmentQualityAnomalyOut,
@@ -1268,6 +1274,76 @@ def metrics(db: Session = Depends(get_db)):
         oee=oee,
         **hold_wait,
     )
+
+
+@app.post("/approvals", response_model=ApprovalOut, status_code=201)
+def create_approval(body: ApprovalCreate, response: Response, db: Session = Depends(get_db)):
+    """An agent proposes an action. Same dedupe_key while still PENDING folds
+    into the existing row (200, occurrence_count+1) instead of adding a new one."""
+    if body.equipment_id is not None and db.get(Equipment, body.equipment_id) is None:
+        raise HTTPException(status_code=404, detail="equipment not found")
+    try:
+        row, created = approvals_service.upsert_request(
+            db,
+            source_agent=body.source_agent,
+            title=body.title,
+            proposal=body.proposal,
+            dedupe_key=body.dedupe_key,
+            risk_level=body.risk_level,
+            evidence=body.evidence,
+            equipment_id=body.equipment_id,
+            ttl_seconds=body.ttl_seconds,
+        )
+    except approvals_service.ApprovalInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not created:
+        response.status_code = 200
+    return row
+
+
+@app.get("/approvals", response_model=list[ApprovalOut])
+def list_approvals(status: str | None = None, db: Session = Depends(get_db)):
+    approvals_service.expire_stale(db, datetime.utcnow())
+    query = db.query(ApprovalRequest)
+    if status:
+        query = query.filter(ApprovalRequest.status == status.upper())
+    rows = query.order_by(ApprovalRequest.created_at.desc()).limit(200).all()
+    if not status or status.upper() == "PENDING":
+        rows.sort(
+            key=lambda r: (
+                r.status != "PENDING",
+                -approvals_service.RISK_ORDER.get(r.risk_level, 0),
+                r.created_at,
+            )
+        )
+    return rows
+
+
+@app.get("/approvals/summary", response_model=ApprovalSummaryOut)
+def approvals_summary(db: Session = Depends(get_db)):
+    approvals_service.expire_stale(db, datetime.utcnow())
+    return approvals_service.summary(db)
+
+
+@app.post("/approvals/{approval_id}/decision", response_model=ApprovalOut)
+def decide_approval(approval_id: int, body: ApprovalDecision, db: Session = Depends(get_db)):
+    try:
+        return approvals_service.decide(
+            db,
+            approval_id,
+            action=body.action,
+            reason=body.reason,
+            edited_proposal=body.edited_proposal,
+            decided_by=body.decided_by,
+        )
+    except approvals_service.ApprovalNotFound:
+        raise HTTPException(status_code=404, detail="approval not found")
+    except approvals_service.ApprovalInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except approvals_service.ApprovalConflict:
+        raise HTTPException(
+            status_code=409, detail="approval already decided or expired"
+        )
 
 
 @app.post("/simulation/start")

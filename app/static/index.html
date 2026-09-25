@@ -201,6 +201,37 @@
   .btn.bad { border-color: var(--bad); color: var(--bad); }
   .btn:disabled { opacity: .4; cursor: default; }
 
+  /* ---- approval queue (human-in-the-loop) ---- */
+  .nav-badge { margin-left: auto; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--bad); color: #fff; font-size: 0.7rem; font-weight: 700; line-height: 18px; text-align: center; }
+  .bottom-nav .nav-item { position: relative; }
+  .bottom-nav .nav-badge { position: absolute; top: 2px; right: 6px; margin: 0; min-width: 16px; line-height: 16px; font-size: 0.65rem; padding: 0 4px; }
+  .ap-summary { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+  .ap-summary .card { flex: 1 1 130px; }
+  .ap-summary .k { font-size: 0.72rem; color: var(--muted); }
+  .ap-summary .v { font-size: 1.35rem; font-weight: 700; }
+  .ap-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .ap-tab { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 4px 12px; font-size: 0.8rem; cursor: pointer; }
+  .ap-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .ap-card { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+  .ap-card.CRITICAL { border-left-color: var(--bad); }
+  .ap-card.HIGH { border-left-color: var(--warn); }
+  .ap-card.MEDIUM { border-left-color: var(--accent); }
+  .ap-card.LOW { border-left-color: var(--good); }
+  .ap-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .ap-title { font-weight: 700; }
+  .ap-risk { font-size: 0.7rem; font-weight: 700; border-radius: 4px; padding: 1px 6px; }
+  .ap-risk.CRITICAL { background: var(--bad-bg); color: var(--bad); }
+  .ap-risk.HIGH { background: var(--warn-bg); color: var(--warn); }
+  .ap-risk.MEDIUM { background: var(--accent-dim); color: var(--accent); }
+  .ap-risk.LOW { background: var(--good-bg); color: var(--good); }
+  .ap-meta { font-size: 0.75rem; color: var(--muted); }
+  .ap-row { font-size: 0.85rem; margin: 3px 0; }
+  .ap-row b { color: var(--muted); font-weight: 600; margin-right: 6px; }
+  .ap-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .ap-form { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); display: grid; gap: 8px; }
+  .ap-form select, .ap-form textarea, .ap-form input { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: inherit; }
+  .ap-empty { text-align: center; color: var(--muted); padding: 30px 10px; background: var(--panel); border: 1px dashed var(--border); border-radius: 10px; }
+
   .form-grid {
     display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 12px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px;
@@ -433,6 +464,21 @@
         <div class="table-wrap" id="anomaly-log-wrap"></div>
       </section>
 
+      <!-- ================= APPROVAL QUEUE ================= -->
+      <section class="panel" data-panel="approvals">
+        <div class="page-head">
+          <h2>승인 큐</h2>
+          <div class="page-desc">
+            에이전트는 조치를 <b>제안만</b> 하고, 실행 여부는 사람이 결정합니다.
+            같은 원인의 요청은 한 건으로 합쳐 횟수만 올라가고, 오래된 요청은 자동으로 만료됩니다.
+            승인해도 이 화면에서 설비가 자동으로 바뀌지는 않습니다 (1단계: 사람이 직접 실행).
+          </div>
+        </div>
+        <div class="ap-summary" id="ap-summary"></div>
+        <div class="ap-tabs" id="ap-tabs"></div>
+        <div id="ap-list"></div>
+      </section>
+
       <!-- ================= SIMULATION ================= -->
       <section class="panel" data-panel="simulation">
         <div class="page-head">
@@ -479,6 +525,7 @@ const ICONS = {
   lots: `<svg ${SVG_ATTRS}><path d="M21 7.5l-9-5-9 5 9 5 9-5z"/><path d="M3 7.5v9l9 5 9-5v-9"/><path d="M12 12.5v9"/></svg>`,
   quality: `<svg ${SVG_ATTRS}><path d="M12 2.5l7 2.7v6.1c0 5-3.2 8.4-7 10.2-3.8-1.8-7-5.2-7-10.2V5.2l7-2.7z"/><path d="M9 12l2 2 4-4.5"/></svg>`,
   simulation: `<svg ${SVG_ATTRS}><circle cx="12" cy="12" r="9.5"/><path d="M10 8.5l6 3.5-6 3.5v-7z"/></svg>`,
+  approvals: `<svg ${SVG_ATTRS}><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h5"/><path d="M9 17l2 2 4-4"/></svg>`,
   anomalylog: `<svg ${SVG_ATTRS}><path d="M12 3l9 16H3l9-16z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>`,
 };
 const NAV_ITEMS = [
@@ -487,6 +534,7 @@ const NAV_ITEMS = [
   { view: "workorders", label: "작업지시", short: "작업지시" },
   { view: "lots", label: "로트 / WIP", short: "로트" },
   { view: "quality", label: "품질", short: "품질" },
+  { view: "approvals", label: "승인 큐", short: "승인" },
   { view: "anomalylog", label: "이상 이력", short: "이상이력" },
   { view: "simulation", label: "시뮬레이션", short: "시뮬" },
 ];
@@ -542,6 +590,7 @@ const VIEW_TITLES = {
   workorders: "작업지시",
   lots: "로트 / WIP",
   quality: "품질",
+  approvals: "승인 큐",
   anomalylog: "이상 이력",
   simulation: "시뮬레이션",
 };
@@ -961,10 +1010,153 @@ function renderAnomalyLog(rows) {
     </table>`;
 }
 
+/* ---------------- approval queue (human-in-the-loop) ---------------- */
+function escapeHtml(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+// The API returns naive UTC timestamps (no "Z"); parse them as UTC.
+function parseUtc(s) { return new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + "Z"); }
+function fmtDuration(sec) {
+  if (sec == null) return "-";
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return sec + "초";
+  if (sec < 3600) return Math.floor(sec / 60) + "분 " + (sec % 60) + "초";
+  return Math.floor(sec / 3600) + "시간 " + Math.floor((sec % 3600) / 60) + "분";
+}
+const RISK_LABEL = { CRITICAL: "긴급", HIGH: "높음", MEDIUM: "보통", LOW: "낮음" };
+const REJECT_REASONS = ["이미 조치함", "오탐(잘못된 경고)", "근거 부족", "지금은 실행 불가", "기타"];
+let approvalTab = "PENDING";
+let approvalOpenForm = null; // { id, mode: "reject" | "edit" } — pauses re-render so typing isn't wiped
+
+function renderApprovalNavBadge(count) {
+  document.querySelectorAll('.nav-item[data-view="approvals"]').forEach(btn => {
+    let b = btn.querySelector(".nav-badge");
+    if (count > 0) {
+      if (!b) { b = document.createElement("span"); b.className = "nav-badge"; btn.appendChild(b); }
+      b.textContent = count;
+    } else if (b) {
+      b.remove();
+    }
+  });
+}
+
+let lastApprovalData = null;
+function renderApprovals(rows, summary, force = false) {
+  lastApprovalData = { rows, summary };
+  renderApprovalNavBadge(summary.pending_count);
+  document.getElementById("ap-summary").innerHTML = `
+    <div class="card"><div class="k">대기 중</div><div class="v">${summary.pending_count}</div></div>
+    <div class="card"><div class="k">가장 오래된 요청</div><div class="v">${fmtDuration(summary.oldest_pending_age_seconds)}</div></div>
+    <div class="card"><div class="k">긴급 / 높음</div><div class="v">${summary.pending_by_risk.CRITICAL} / ${summary.pending_by_risk.HIGH}</div></div>
+    <div class="card"><div class="k">승인 · 반려 · 만료</div><div class="v">${summary.approved_total} · ${summary.rejected_total} · ${summary.expired_total}</div></div>`;
+
+  const tabs = [["PENDING", `대기 (${summary.pending_count})`], ["DECIDED", "처리 완료"]];
+  document.getElementById("ap-tabs").innerHTML = tabs.map(([k, label]) =>
+    `<button class="ap-tab${approvalTab === k ? " active" : ""}" data-aptab="${k}">${label}</button>`).join("");
+
+  // A poll must not wipe a half-typed reason; a click (force) must still draw the form.
+  if (approvalOpenForm && !force) return;
+  const list = approvalTab === "PENDING"
+    ? rows.filter(r => r.status === "PENDING")
+    : rows.filter(r => r.status !== "PENDING").sort((a, b) => parseUtc(b.decided_at || b.created_at) - parseUtc(a.decided_at || a.created_at));
+  const el = document.getElementById("ap-list");
+  if (!list.length) {
+    el.innerHTML = `<div class="ap-empty">${approvalTab === "PENDING"
+      ? "대기 중인 승인 요청이 없습니다. 품질 이상이 감지되면 여기에 나타납니다."
+      : "아직 처리한 요청이 없습니다."}</div>`;
+    return;
+  }
+  el.innerHTML = list.map(r => approvalTab === "PENDING" ? approvalPendingCard(r) : approvalDecidedCard(r)).join("");
+}
+
+function approvalPendingCard(r) {
+  const left = r.expires_at ? (parseUtc(r.expires_at) - Date.now()) / 1000 : null;
+  const open = approvalOpenForm && approvalOpenForm.id === r.id ? approvalOpenForm.mode : null;
+  let form = "";
+  if (open === "reject") {
+    form = `<div class="ap-form">
+      <select id="ap-reason-sel">${REJECT_REASONS.map(x => `<option>${escapeHtml(x)}</option>`).join("")}</select>
+      <input id="ap-reason-txt" placeholder="추가 메모 (선택)">
+      <div class="ap-actions"><button class="btn bad" data-apdo="reject-confirm" data-id="${r.id}">반려 확정</button><button class="btn" data-apdo="cancel">취소</button></div>
+    </div>`;
+  } else if (open === "edit") {
+    form = `<div class="ap-form">
+      <textarea id="ap-edit-txt" rows="3">${escapeHtml(r.proposal)}</textarea>
+      <div class="ap-actions"><button class="btn good" data-apdo="edit-confirm" data-id="${r.id}">수정해서 승인</button><button class="btn" data-apdo="cancel">취소</button></div>
+    </div>`;
+  }
+  return `<div class="ap-card ${escapeHtml(r.risk_level)}">
+    <div class="ap-head">
+      <span class="ap-risk ${escapeHtml(r.risk_level)}">${RISK_LABEL[r.risk_level] || escapeHtml(r.risk_level)}</span>
+      <span class="ap-title">${escapeHtml(r.title)}</span>
+      ${r.occurrence_count > 1 ? `<span class="ap-meta">· 같은 원인 ${r.occurrence_count}회 감지</span>` : ""}
+    </div>
+    <div class="ap-row"><b>제안</b>${escapeHtml(r.proposal)}</div>
+    ${r.evidence ? `<div class="ap-row"><b>근거</b>${escapeHtml(r.evidence)}</div>` : ""}
+    <div class="ap-meta">제안: ${escapeHtml(r.source_agent)} · 요청 ${parseUtc(r.created_at).toLocaleTimeString("ko-KR")}${left != null ? ` · 만료까지 ${fmtDuration(left)}` : ""}</div>
+    ${form || `<div class="ap-actions">
+      <button class="btn good" data-apdo="approve" data-id="${r.id}">승인</button>
+      <button class="btn bad" data-apdo="reject" data-id="${r.id}">반려</button>
+      <button class="btn" data-apdo="edit" data-id="${r.id}">수정</button>
+    </div>`}
+  </div>`;
+}
+
+function approvalDecidedCard(r) {
+  const label = { APPROVED: "승인", REJECTED: "반려", EXPIRED: "만료" }[r.status] || r.status;
+  const cls = { APPROVED: "PASS", REJECTED: "FAIL", EXPIRED: "PENDING" }[r.status] || "";
+  return `<div class="ap-card ${escapeHtml(r.risk_level)}">
+    <div class="ap-head">
+      <span class="badge ${cls}">${label}</span>
+      <span class="ap-title">${escapeHtml(r.title)}</span>
+      ${r.occurrence_count > 1 ? `<span class="ap-meta">· ${r.occurrence_count}회 감지</span>` : ""}
+    </div>
+    <div class="ap-row"><b>제안</b>${escapeHtml(r.proposal)}</div>
+    ${r.edited_proposal ? `<div class="ap-row"><b>수정본</b>${escapeHtml(r.edited_proposal)}</div>` : ""}
+    ${r.decision_reason ? `<div class="ap-row"><b>사유</b>${escapeHtml(r.decision_reason)}</div>` : ""}
+    <div class="ap-meta">${escapeHtml(r.decided_by || "-")} · ${r.decided_at ? parseUtc(r.decided_at).toLocaleString("ko-KR") : "-"}</div>
+  </div>`;
+}
+
+async function submitApprovalDecision(id, body) {
+  const res = await fetch(`/approvals/${id}/decision`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 409) alert("이미 처리되었거나 만료된 요청입니다.");
+  else if (!res.ok) alert("처리 실패: " + (await res.text()));
+  approvalOpenForm = null;
+  tick();
+}
+
+document.addEventListener("click", e => {
+  const redraw = () => lastApprovalData && renderApprovals(lastApprovalData.rows, lastApprovalData.summary, true);
+  const tab = e.target.closest("[data-aptab]");
+  if (tab) { approvalTab = tab.dataset.aptab; approvalOpenForm = null; redraw(); return; }
+  const btn = e.target.closest("[data-apdo]");
+  if (!btn) return;
+  const id = Number(btn.dataset.id);
+  const act = btn.dataset.apdo;
+  if (act === "approve") submitApprovalDecision(id, { action: "approve" });
+  else if (act === "reject") { approvalOpenForm = { id, mode: "reject" }; redraw(); }
+  else if (act === "edit") { approvalOpenForm = { id, mode: "edit" }; redraw(); }
+  else if (act === "cancel") { approvalOpenForm = null; redraw(); }
+  else if (act === "reject-confirm") {
+    const sel = document.getElementById("ap-reason-sel").value;
+    const memo = document.getElementById("ap-reason-txt").value.trim();
+    submitApprovalDecision(id, { action: "reject", reason: memo ? `${sel} — ${memo}` : sel });
+  } else if (act === "edit-confirm") {
+    const txt = document.getElementById("ap-edit-txt").value.trim();
+    if (!txt) { alert("수정 내용을 입력하세요."); return; }
+    submitApprovalDecision(id, { action: "approve", edited_proposal: txt });
+  }
+});
+
 /* ---------------- main poll loop ---------------- */
 async function tick() {
   try {
-    const [metrics, equipment, workOrders, lots, quality, anomalies, anomalyLog, sim] = await Promise.all([
+    const [metrics, equipment, workOrders, lots, quality, anomalies, anomalyLog, sim, approvalRows, approvalSummary] = await Promise.all([
       getJSON("/metrics"),
       getJSON("/equipment"),
       getJSON("/work-orders"),
@@ -973,6 +1165,8 @@ async function tick() {
       getJSON("/quality/anomalies"),
       getJSON("/quality/anomaly-log"),
       getJSON("/simulation/status"),
+      getJSON("/approvals"),
+      getJSON("/approvals/summary"),
     ]);
     renderCards(metrics, quality);
     renderSimulation(sim);
@@ -983,6 +1177,7 @@ async function tick() {
     renderQuality(quality);
     renderAnomalies(anomalies);
     renderAnomalyLog(anomalyLog);
+    renderApprovals(approvalRows, approvalSummary);
     if (selectedLotId) await renderLotDrawer();
     if (selectedEquipmentId) await renderEquipmentDrawer();
     document.getElementById("conn-dot").title = "연결됨 · " + new Date().toLocaleTimeString("ko-KR");

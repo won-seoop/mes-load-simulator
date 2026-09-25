@@ -274,6 +274,19 @@
       전 빈 값, reason별 분리, `/equipment` 응답 배선) 전체 통과, Server 5xx/IntegrityError 0,
       실패율 0%. 회귀 방지를 위해 "설비당 반복 조회를 만들 때는 같은 쿼리를 두 번 부르고
       있지 않은지 확인한다"는 교훈을 이 항목에 남긴다.
+- [x] (2026-09-24) Human-in-the-Loop 승인 큐 1단계 구현. AI/에이전트가 조치를 "제안만" 하고 사람이
+      승인/반려/수정하는 흐름의 뼈대다. `ApprovalRequest` 테이블과 `POST/GET /approvals`,
+      `GET /approvals/summary`, `POST /approvals/{id}/decision` API, 대시보드 "승인 큐" 페이지를 추가했다.
+      운영자 부담이 쌓이지 않도록 세 가지 장치를 처음부터 넣었다: 위험도(`risk_level`, 위험 높은 순 정렬),
+      같은 원인 병합(`dedupe_key`+`occurrence_count`, 대기 중인 같은 키는 새 행이 아니라 횟수만 증가),
+      만료(`expires_at`, 만료된 요청은 승인 불가·EXPIRED). 결정은 조건부 UPDATE로 처리해 동시에 두 명이
+      결정해도 한 명만 성공하고 나머지는 409를 받는다. 반려는 사유가 필수(피드백 신호). 첫 요청 생산자는
+      AI 없는 규칙 기반 "품질 에이전트"(`rule:quality-anomaly`)로, 기존 30초 이상탐지 결과 중 WARNING/CRITICAL만
+      요청으로 만든다(WATCH는 이상 이력에만 남김). 이 규칙 기반 동작이 이후 LLM 에이전트와 비교할 Baseline이다.
+      승인해도 설비/로트는 자동으로 바뀌지 않는다(사람이 직접 실행). 검증: pytest 78→92(신규 14), Playwright로
+      승인/반려/수정 클릭 흐름, 폴링 중 입력 유지, XSS 문자열의 텍스트 렌더링, 모바일 가로 스크롤 없음 확인.
+      UI 테스트에서 "폼을 여는 클릭까지 재렌더가 막히는" 버그를 발견해 수정했다.
+      한계: 승인 후 실제 실행, Audit Trail, 설비·이상이력·승인 큐용 MCP 도구(읽기 전용 agent_gateway는 이미 있음), LLM 에이전트, 컨트롤타워는 아직 없다.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
