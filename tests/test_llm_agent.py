@@ -242,8 +242,37 @@ def test_process_with_advisor_queues_the_escalated_risk(client, db):
 
 def test_simulation_survives_an_llm_failure_and_still_queues_the_rule_request(client, db, monkeypatch):
     _, rule = _rule(db, client)
-    monkeypatch.setattr(llm_agent, "get_client", lambda: FakeClient(error=RuntimeError("api down")))
+    monkeypatch.setattr(llm_agent, "get_client", lambda role="root-cause": FakeClient(error=RuntimeError("api down")))
     engine = SimulationEngine()
     engine._propose_actions(db, [], T0)
     assert db.query(ApprovalRequest).count() == 1
     assert {r.status for r in _runs(db)} == {"ERROR"}
+
+
+def test_each_role_gets_its_own_model_and_env_overrides_it(monkeypatch):
+    for var in ("LLM_MODEL_ROOT_CAUSE", "LLM_MODEL_TOWER"):
+        monkeypatch.delenv(var, raising=False)
+    assert llm_agent.model_for("root-cause") == "claude-sonnet-5"
+    assert llm_agent.model_for("tower-advisor") == "claude-opus-5-5"
+    monkeypatch.setenv("LLM_MODEL_TOWER", "claude-sonnet-5")
+    assert llm_agent.model_for("tower-advisor") == "claude-sonnet-5"
+    assert llm_agent.model_for("root-cause") == "claude-sonnet-5"
+
+
+def test_get_client_builds_each_role_with_its_model(monkeypatch):
+    monkeypatch.setenv("LLM_AGENT_ENABLED", "1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    built = []
+
+    class Spy:
+        def __init__(self, key, model, max_tokens):
+            built.append((model, max_tokens))
+            self.model = model
+
+    monkeypatch.setattr(llm_agent, "AnthropicClient", Spy)
+    monkeypatch.delenv("LLM_MODEL_ROOT_CAUSE", raising=False)
+    monkeypatch.delenv("LLM_MODEL_TOWER", raising=False)
+    llm_agent.get_client("root-cause")
+    llm_agent.get_client("tower-advisor")
+    assert [m for m, _ in built] == ["claude-sonnet-5", "claude-opus-5-5"]
+    assert built[0][1] == llm_agent.DEFAULT_MAX_TOKENS

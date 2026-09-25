@@ -44,7 +44,17 @@ from app.models import (
 logger = logging.getLogger("app.llm_agent")
 
 AGENT_NAME = "llm:root-cause"
-DEFAULT_MODEL = "claude-sonnet-5"
+# Model per role, from the model-selection research (Anthropic model docs, 2026-09-25):
+# - root-cause: a short single-chain explanation, so the fast middle tier (Sonnet 5).
+# - tower-advisor: cross-agent synthesis where the operator wants the stronger model
+#   (Opus 5.5). This is a chosen default, NOT a proven win: the literature shows no
+#   controlled evidence that a larger model synthesizes better, so scripts/compare_llm_models.py
+#   measures it before it is trusted.
+# Detection itself (defect-rate and downtime rules) stays statistical and uses no LLM.
+DEFAULT_MODELS = {"root-cause": "claude-sonnet-5", "tower-advisor": "claude-opus-5-5"}
+MODEL_ENV = {"root-cause": "LLM_MODEL_ROOT_CAUSE", "tower-advisor": "LLM_MODEL_TOWER"}
+# Adaptive thinking on the larger models spends output tokens before the answer text.
+DEFAULT_MAX_TOKENS = 2000
 # Demo values: do not analyze the same equipment again inside this window, to bound cost.
 COOLDOWN_SECONDS = 300.0
 REQUEST_TIMEOUT_SECONDS = 20.0
@@ -73,16 +83,17 @@ class LlmClient(Protocol):
 
 
 class AnthropicClient:
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(self, api_key: str, model: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> None:
         import anthropic  # imported lazily so the app and tests work without the SDK
 
         self.model = model
+        self._max_tokens = max_tokens
         self._client = anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS)
 
     def complete(self, system: str, user: str) -> tuple[str, Optional[int], Optional[int]]:
         msg = self._client.messages.create(
             model=self.model,
-            max_tokens=400,
+            max_tokens=self._max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -90,7 +101,11 @@ class AnthropicClient:
         return text, msg.usage.input_tokens, msg.usage.output_tokens
 
 
-def get_client() -> Optional[LlmClient]:
+def model_for(role: str) -> str:
+    return os.environ.get(MODEL_ENV[role], DEFAULT_MODELS[role])
+
+
+def get_client(role: str = "root-cause") -> Optional[LlmClient]:
     """None unless explicitly enabled; the key comes from the environment only."""
     if os.environ.get("LLM_AGENT_ENABLED") != "1":
         return None
@@ -98,7 +113,8 @@ def get_client() -> Optional[LlmClient]:
     if not key:
         logger.warning("LLM_AGENT_ENABLED=1 but ANTHROPIC_API_KEY is not set")
         return None
-    return AnthropicClient(key, os.environ.get("LLM_AGENT_MODEL", DEFAULT_MODEL))
+    max_tokens = int(os.environ.get("LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS))
+    return AnthropicClient(key, model_for(role), max_tokens)
 
 
 def build_facts(db: Session, equipment_id: int, now: datetime) -> dict:
