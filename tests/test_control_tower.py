@@ -269,3 +269,79 @@ def test_watch_anomaly_still_creates_no_approval_request(client, db, monkeypatch
 
     assert db.query(ApprovalRequest).count() == 0
     assert db.query(ControlTowerDecision).count() == 0
+
+
+def test_concurrent_downs_below_threshold_are_quiet(client, db):
+    for name in ("ETCH-01", "ETCH-02", "ETCH-03", "CVD-01"):
+        _add_downs(db, _equipment(client, name)["id"], 1)
+
+    assert equipment_agent.propose_from_concurrent_downs(db, T0) == []
+
+
+def test_five_tools_down_together_become_one_factory_level_queued_request(client, db):
+    for name in ("ETCH-01", "ETCH-02", "ETCH-03", "CVD-01", "CVD-02"):
+        _add_downs(db, _equipment(client, name)["id"], 1)
+
+    proposals = equipment_agent.propose_from_concurrent_downs(db, T0)
+    assert len(proposals) == 1
+    assert proposals[0].equipment_id is None
+    assert proposals[0].risk_level == "MEDIUM"
+
+    written = ct.process(db, proposals, T0)
+    assert [w.disposition for w in written] == [ct.QUEUE]
+    row = db.query(ApprovalRequest).one()
+    assert row.equipment_id is None and "5대" in row.title
+
+
+def test_eight_tools_down_together_are_high(client, db):
+    for eq in client.get("/equipment").json()[:8]:
+        _add_downs(db, eq["id"], 1)
+
+    assert equipment_agent.propose_from_concurrent_downs(db, T0)[0].risk_level == "HIGH"
+
+
+def test_downs_outside_the_concurrent_window_do_not_count(client, db):
+    for eq in client.get("/equipment").json()[:6]:
+        _add_downs(db, eq["id"], 1, end=T0 - timedelta(seconds=equipment_agent.CONCURRENT_DOWN_WINDOW_SECONDS + 5))
+
+    assert equipment_agent.propose_from_concurrent_downs(db, T0) == []
+
+
+def test_defect_bias_injection_rejects_bad_requests(client):
+    etch = _equipment(client, "ETCH-01")
+    assert client.post("/simulation/inject/defect-bias", json={"equipment_id": etch["id"], "defect_rate": 0.9}).status_code == 422
+    assert client.post("/simulation/inject/defect-bias", json={"equipment_id": 99999, "defect_rate": 0.9}).status_code == 404
+    inspect = next(e for e in client.get("/equipment").json() if e["process_step"] == "INSPECT")
+    assert client.post("/simulation/inject/defect-bias", json={"equipment_id": inspect["id"], "defect_rate": 0}).status_code == 422
+
+
+def test_defect_bias_raises_only_the_target_tools_failure_rate(client, db):
+    from app.models import Lot, LotEvent, LotEventType, LotStatus
+    from app.simulation import engine as live_engine
+
+    inspects = [e for e in client.get("/equipment").json() if e["process_step"] == "INSPECT"]
+    target, other = inspects[0], inspects[1]
+
+    def lot_on(equipment_id):
+        lot = Lot(product="X", quantity=1, status=LotStatus.QUALITY_HOLD)
+        db.add(lot)
+        db.commit()
+        db.add(LotEvent(lot_id=lot.id, sequence_number=1, event_type=LotEventType.PROCESS_COMPLETED,
+                        process_step="INSPECT", equipment_id=equipment_id, to_status=LotStatus.QUALITY_HOLD))
+        db.commit()
+        return lot.id
+
+    on_target, on_other = lot_on(target["id"]), lot_on(other["id"])
+    base = live_engine._config.defect_rate
+    assert live_engine._defect_rate_for(db, on_target) == base
+
+    r = client.post("/simulation/inject/defect-bias",
+                    json={"equipment_id": target["id"], "defect_rate": 0.9, "duration_seconds": 60})
+    assert r.status_code == 200
+    try:
+        assert live_engine._defect_rate_for(db, on_target) == 0.9
+        assert live_engine._defect_rate_for(db, on_other) == base
+        assert str(target["id"]) in client.get("/simulation/status").json()["defect_bias"]
+    finally:
+        client.delete("/simulation/inject/defect-bias")
+    assert live_engine._defect_rate_for(db, on_target) == base

@@ -16,6 +16,13 @@ EQUIPMENT_DOWN_WINDOW_SECONDS = 600.0
 # (min DOWN count in window, risk), highest first; the lowest count is the proposal threshold.
 EQUIPMENT_DOWN_RISK_TIERS = ((6, "HIGH"), (4, "MEDIUM"), (3, "LOW"))
 
+# Many different tools going DOWN close together points at a shared cause (utility,
+# power, network), not at any one tool. Demo values: random simulator faults can
+# occasionally reach the lowest tier by chance.
+CONCURRENT_DOWN_WINDOW_SECONDS = 40.0  # a bit above the 30 s check interval so a check cannot miss the burst
+# (min distinct equipment DOWN in window, risk), highest first.
+CONCURRENT_DOWN_RISK_TIERS = ((8, "HIGH"), (5, "MEDIUM"))
+
 
 def _risk_for(count: int) -> str | None:
     for min_count, risk in EQUIPMENT_DOWN_RISK_TIERS:
@@ -59,3 +66,35 @@ def propose_from_downtime(db: Session, now: datetime) -> list[Proposal]:
             )
         )
     return proposals
+
+
+def propose_from_concurrent_downs(db: Session, now: datetime) -> list[Proposal]:
+    since = now - timedelta(seconds=CONCURRENT_DOWN_WINDOW_SECONDS)
+    equipment_ids = {
+        row[0]
+        for row in db.query(EquipmentDowntimeEvent.equipment_id)
+        .filter(EquipmentDowntimeEvent.started_at >= since, EquipmentDowntimeEvent.started_at <= now)
+        .all()
+    }
+    count = len(equipment_ids)
+    risk = next((r for n, r in CONCURRENT_DOWN_RISK_TIERS if count >= n), None)
+    if risk is None:
+        return []
+    names = ", ".join(
+        sorted(eq.name for eq in db.query(Equipment).filter(Equipment.id.in_(equipment_ids)).all())
+    )
+    return [
+        Proposal(
+            source_agent=AGENT_NAME,
+            equipment_id=None,
+            equipment_name="공장 전체",
+            title=f"설비 {count}대 동시 DOWN",
+            proposal="공통 원인(전력·유틸리티·네트워크)을 점검한다",
+            evidence=(
+                f"최근 {CONCURRENT_DOWN_WINDOW_SECONDS:.0f}초 내 서로 다른 설비 {count}대 DOWN ({names})"
+            ),
+            risk_level=risk,
+            action_kind="INSPECT_EQUIPMENT",
+            dedupe_key="factory-wide-down",
+        )
+    ]

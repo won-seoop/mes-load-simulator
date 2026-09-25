@@ -37,6 +37,7 @@ from app.schemas import (
     ApprovalOut,
     ApprovalSummaryOut,
     ControlTowerDecisionOut,
+    DefectBiasInject,
     EquipmentDowntimeEventOut,
     EquipmentOut,
     EquipmentQualityAnomalyOut,
@@ -1368,6 +1369,28 @@ async def start_simulation():
     """
     simulation_engine.start()
     return simulation_engine.status()
+
+
+@app.post("/simulation/inject/defect-bias")
+def inject_defect_bias(body: DefectBiasInject, db: Session = Depends(get_db)):
+    """Scenario injection (demo): make one INSPECT tool's inspections fail at a
+    higher rate so the quality-anomaly agent has something to detect. Only
+    inspection stations produce pass/fail data, so other tools are rejected."""
+    eq = db.get(Equipment, body.equipment_id)
+    if not eq:
+        raise HTTPException(404, "equipment not found")
+    if eq.process_step != "INSPECT":
+        raise HTTPException(422, "defect bias applies to INSPECT equipment only")
+    expires = simulation_engine.inject_defect_bias(
+        eq.id, body.defect_rate, body.duration_seconds, eq.name
+    )
+    return {"equipment_id": eq.id, "defect_rate": body.defect_rate, "expires_at": expires}
+
+
+@app.delete("/simulation/inject/defect-bias")
+def clear_defect_bias():
+    simulation_engine.clear_defect_bias()
+    return {"cleared": True}
 
 
 @app.post("/simulation/stop")

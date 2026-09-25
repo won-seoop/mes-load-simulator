@@ -34,6 +34,8 @@ from app.models import (
     EquipmentStatus,
     InspectionResult,
     Lot,
+    LotEvent,
+    LotEventType,
     LotStatus,
     PROCESS_ROUTE,
     Product,
@@ -99,6 +101,8 @@ class SimulationEngine:
         self._next_action: dict[int, datetime] = {}  # lot_id -> next action due time
         self._next_equipment_recovery: dict[int, datetime] = {}
         self._next_anomaly_check_at: datetime | None = None
+        # equipment_id -> (injected defect rate, expires_at); scenario injection only
+        self._defect_bias: dict[int, tuple[float, datetime]] = {}
         self._events: deque[str] = deque(maxlen=40)
         self._mes_main = None  # lazily imported to avoid a circular import
 
@@ -109,8 +113,44 @@ class SimulationEngine:
             "started_at": self._started_at,
             "ticks": self._ticks,
             "config": asdict(self._config),
+            "defect_bias": {
+                str(eq_id): {"defect_rate": rate, "expires_at": expires}
+                for eq_id, (rate, expires) in self._defect_bias.items()
+                if expires > datetime.utcnow()
+            },
             "recent_events": list(self._events)[::-1],
         }
+
+    def inject_defect_bias(
+        self, equipment_id: int, defect_rate: float, duration_seconds: float, name: str
+    ) -> datetime:
+        """Scenario injection: inspections of lots that last ran on this INSPECT
+        tool fail at `defect_rate` until it expires, instead of the global rate."""
+        expires = datetime.utcnow() + timedelta(seconds=duration_seconds)
+        self._defect_bias[equipment_id] = (defect_rate, expires)
+        self._log(f"시나리오 주입: {name} 불량률 {defect_rate * 100:.0f}% ({duration_seconds:.0f}초)")
+        return expires
+
+    def clear_defect_bias(self) -> None:
+        self._defect_bias.clear()
+
+    def _defect_rate_for(self, db: Session, lot_id: int) -> float:
+        if not self._defect_bias:
+            return self._config.defect_rate
+        last = (
+            db.query(LotEvent)
+            .filter(
+                LotEvent.lot_id == lot_id,
+                LotEvent.event_type == LotEventType.PROCESS_COMPLETED,
+                LotEvent.process_step == "INSPECT",
+            )
+            .order_by(LotEvent.sequence_number.desc())
+            .first()
+        )
+        bias = self._defect_bias.get(last.equipment_id) if last is not None else None
+        if bias is not None and bias[1] > datetime.utcnow():
+            return bias[0]
+        return self._config.defect_rate
 
     def start(self, config: SimulationConfig | None = None) -> None:
         if config is not None:
@@ -273,6 +313,7 @@ class SimulationEngine:
         standing condition folds into one approval row rather than one per cycle."""
         proposals = [p for a in anomalies if (p := self._quality_proposal(a)) is not None]
         proposals += equipment_agent.propose_from_downtime(db, now)
+        proposals += equipment_agent.propose_from_concurrent_downs(db, now)
         control_tower.process(db, proposals, now)
 
     # -- lot arrivals -----------------------------------------------------
@@ -376,7 +417,7 @@ class SimulationEngine:
                 self._log(f"로트 #{lot.id} 1차 불량 → REWORK 1회 허용")
             return
 
-        passed = random.random() >= self._config.defect_rate
+        passed = random.random() >= self._defect_rate_for(db, lot.id)
         if passed:
             mes_main.inspect_lot(
                 lot.id, mes_main.QualityInspectionCreate(result=InspectionResult.PASS), db=db
