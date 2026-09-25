@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger("app.simulation")
 
-from app import approvals as approvals_service
+from app import control_tower, equipment_agent
 from app.database import SessionLocal
 from app.models import (
     AnomalyLog,
@@ -208,8 +208,9 @@ class SimulationEngine:
             return
         self._next_anomaly_check_at = now + timedelta(seconds=ANOMALY_CHECK_INTERVAL_SECONDS)
 
-        for anomaly in mes_main._detect_quality_anomalies(db):
-            self._propose_action(db, anomaly, now)
+        anomalies = mes_main._detect_quality_anomalies(db)
+        self._propose_actions(db, anomalies, now)
+        for anomaly in anomalies:
             suppress_since = now - timedelta(seconds=ANOMALY_LOG_SUPPRESS_SECONDS)
             recent = (
                 db.query(AnomalyLog)
@@ -245,17 +246,16 @@ class SimulationEngine:
     # WATCH is left to the anomaly log; only WARNING/CRITICAL ask a human.
     _APPROVAL_RISK_BY_SEVERITY = {"WARNING": "HIGH", "CRITICAL": "CRITICAL"}
 
-    def _propose_action(self, db: Session, anomaly, now: datetime) -> None:
-        """Rule-based baseline 'quality agent': turn a detected anomaly into an
-        approval request. A standing anomaly folds into one row (dedupe_key per
-        equipment) rather than producing one request per detection cycle."""
+    def _quality_proposal(self, anomaly) -> control_tower.Proposal | None:
+        """Rule-based baseline 'quality agent': one proposal per detected anomaly."""
         risk = self._APPROVAL_RISK_BY_SEVERITY.get(anomaly.severity)
         if risk is None:
-            return
+            return None
         z = f"{anomaly.z_score:.2f}" if anomaly.z_score is not None else "N/A"
-        approvals_service.upsert_request(
-            db,
+        return control_tower.Proposal(
             source_agent="rule:quality-anomaly",
+            equipment_id=anomaly.equipment_id,
+            equipment_name=anomaly.equipment_name,
             title=f"{anomaly.equipment_name} 품질 이상 ({anomaly.process_step})",
             proposal=f"{anomaly.equipment_name} 신규 배정을 중지하고 점검한다",
             evidence=(
@@ -264,11 +264,16 @@ class SimulationEngine:
                 f"검사 {anomaly.total_inspections}건"
             ),
             risk_level=risk,
-            equipment_id=anomaly.equipment_id,
+            action_kind="STOP_NEW_DISPATCH",
             dedupe_key=f"quality-anomaly:{anomaly.equipment_id}",
-            ttl_seconds=900,
-            now=now,
         )
+
+    def _propose_actions(self, db: Session, anomalies, now: datetime) -> None:
+        """Agents only propose; the control tower merges, gates and queues. A
+        standing condition folds into one approval row rather than one per cycle."""
+        proposals = [p for a in anomalies if (p := self._quality_proposal(a)) is not None]
+        proposals += equipment_agent.propose_from_downtime(db, now)
+        control_tower.process(db, proposals, now)
 
     # -- lot arrivals -----------------------------------------------------
     def _maybe_spawn_lot(self, db: Session, now: datetime, mes_main) -> None:

@@ -14,6 +14,7 @@ from app.models import (
     PROCESS_ROUTE,
     AnomalyLog,
     ApprovalRequest,
+    ControlTowerDecision,
     Equipment,
     EquipmentDowntimeEvent,
     EquipmentStatus,
@@ -35,6 +36,7 @@ from app.schemas import (
     ApprovalDecision,
     ApprovalOut,
     ApprovalSummaryOut,
+    ControlTowerDecisionOut,
     EquipmentDowntimeEventOut,
     EquipmentOut,
     EquipmentQualityAnomalyOut,
@@ -1344,6 +1346,16 @@ def decide_approval(approval_id: int, body: ApprovalDecision, db: Session = Depe
         raise HTTPException(
             status_code=409, detail="approval already decided or expired"
         )
+
+
+@app.get("/control-tower/decisions", response_model=list[ControlTowerDecisionOut])
+def list_control_tower_decisions(db: Session = Depends(get_db)):
+    return (
+        db.query(ControlTowerDecision)
+        .order_by(ControlTowerDecision.decided_at.desc(), ControlTowerDecision.id.desc())
+        .limit(100)
+        .all()
+    )
 
 
 @app.post("/simulation/start")

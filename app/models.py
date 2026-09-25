@@ -263,3 +263,24 @@ class ApprovalRequest(Base):
     decided_by = Column(String, nullable=True)
     decision_reason = Column(String, nullable=True)
     edited_proposal = Column(Text, nullable=True)
+
+
+class ControlTowerDecision(Base):
+    """What the control tower did with a (merged) agent proposal and why.
+
+    QUEUE rows point at the ApprovalRequest they created or folded into;
+    BLOCK and AUTO_RECORD rows exist so a proposal that never reached a human
+    is still visible instead of silently vanishing.
+    """
+
+    __tablename__ = "control_tower_decision"
+
+    id = Column(Integer, primary_key=True, index=True)
+    decided_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=True, index=True)
+    equipment_name = Column(String, nullable=True)
+    disposition = Column(String, nullable=False, index=True)
+    reason = Column(Text, nullable=False)
+    contributing_agents = Column(String, nullable=False)  # comma-separated
+    risk_level = Column(String, nullable=False)
+    approval_id = Column(Integer, ForeignKey("approval_request.id"), nullable=True)

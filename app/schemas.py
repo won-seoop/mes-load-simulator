@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.models import (
     EquipmentStatus,
@@ -289,6 +289,26 @@ class ApprovalSummaryOut(BaseModel):
     rejected_total: int
     expired_total: int
     edited_total: int
+
+
+class ControlTowerDecisionOut(BaseModel):
+    id: int
+    decided_at: datetime
+    equipment_id: Optional[int]
+    equipment_name: Optional[str]
+    disposition: str
+    reason: str
+    contributing_agents: list[str]
+    risk_level: str
+    approval_id: Optional[int]
+
+    @field_validator("contributing_agents", mode="before")
+    @classmethod
+    def _split_agents(cls, v):
+        return v.split(",") if isinstance(v, str) else v
+
+    class Config:
+        from_attributes = True
 
 
 class MetricsOut(BaseModel):
