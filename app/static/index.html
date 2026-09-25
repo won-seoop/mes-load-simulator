@@ -1117,7 +1117,7 @@ function approvalPendingCard(r) {
   }
   return `<div class="ap-card ${escapeHtml(r.risk_level)}">
     <div class="ap-head">
-      <span class="ap-risk ${escapeHtml(r.risk_level)}">${RISK_LABEL[r.risk_level] || escapeHtml(r.risk_level)}</span>
+      <span class="ap-risk ${escapeHtml(r.risk_level)}" title="같은 원인이 반복 감지된 동안의 최고 위험도">${RISK_LABEL[r.risk_level] || escapeHtml(r.risk_level)}${r.occurrence_count > 1 ? " (최고)" : ""}</span>
       <span class="ap-title">${escapeHtml(r.title)}</span>
       ${r.occurrence_count > 1 ? `<span class="ap-meta">· 같은 원인 ${r.occurrence_count}회 감지</span>` : ""}
     </div>

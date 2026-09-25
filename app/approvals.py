@@ -79,6 +79,10 @@ def upsert_request(
         existing.occurrence_count += 1
         existing.last_seen_at = now
         existing.expires_at = expires_at
+        # Title/proposal/evidence describe the latest observation; risk_level stays the
+        # peak so a brief dip cannot hide a request that was HIGH earlier.
+        existing.title = title
+        existing.proposal = proposal
         if evidence is not None:
             existing.evidence = evidence
         if RISK_ORDER[risk_level] > RISK_ORDER[existing.risk_level]:

@@ -172,3 +172,15 @@ def test_quality_anomaly_creates_one_request_that_counts_up_not_duplicates(clien
     assert rows[0]["risk_level"] == "CRITICAL"
     assert rows[0]["occurrence_count"] == 3
     assert "INSPECT-03" in rows[0]["title"]
+
+
+def test_folding_refreshes_title_and_proposal_but_keeps_peak_risk(client):
+    body = dict(source_agent="a", title="X 반복 DOWN (4회)", proposal="점검", evidence="4회",
+                risk_level="HIGH", dedupe_key="k1")
+    first = client.post("/approvals", json=body)
+    assert first.status_code == 201
+    second = client.post("/approvals", json={**body, "title": "X 반복 DOWN (5회)", "evidence": "5회", "risk_level": "MEDIUM"})
+    assert second.status_code == 200
+    row = second.json()
+    assert row["title"] == "X 반복 DOWN (5회)" and row["evidence"] == "5회"
+    assert row["risk_level"] == "HIGH" and row["occurrence_count"] == 2
