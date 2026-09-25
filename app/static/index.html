@@ -212,7 +212,7 @@
   .ap-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
   .ap-tab { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 4px 12px; font-size: 0.8rem; cursor: pointer; }
   .ap-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .ap-card { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+  .ap-card { background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; box-shadow: 0 1px 2px rgba(16,24,40,.04); overflow-wrap: anywhere; }
   .ap-card.CRITICAL { border-left-color: var(--bad); }
   .ap-card.HIGH { border-left-color: var(--warn); }
   .ap-card.MEDIUM { border-left-color: var(--accent); }
@@ -230,6 +230,10 @@
   .ap-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   .ap-form { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); display: grid; gap: 8px; }
   .ap-form select, .ap-form textarea, .ap-form input { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: inherit; }
+  .ct-badge { font-size: 0.7rem; font-weight: 700; border-radius: 4px; padding: 1px 6px; }
+  .ct-badge.BLOCK { background: var(--bad-bg); color: var(--bad); }
+  .ct-badge.AUTO_RECORD { background: var(--good-bg); color: var(--good); }
+  .ct-badge.QUEUE { background: var(--accent-dim); color: var(--accent); }
   .ap-empty { text-align: center; color: var(--muted); padding: 30px 10px; background: var(--panel); border: 1px dashed var(--border); border-radius: 10px; }
 
   .form-grid {
@@ -472,6 +476,7 @@
             에이전트는 조치를 <b>제안만</b> 하고, 실행 여부는 사람이 결정합니다.
             같은 원인의 요청은 한 건으로 합쳐 횟수만 올라가고, 오래된 요청은 자동으로 만료됩니다.
             승인해도 이 화면에서 설비가 자동으로 바뀌지는 않습니다 (1단계: 사람이 직접 실행).
+            에이전트 제안은 컨트롤타워가 같은 설비끼리 합치고 차단/자동 기록/승인 큐로 나눕니다.
           </div>
         </div>
         <div class="ap-summary" id="ap-summary"></div>
@@ -484,6 +489,11 @@
         <div class="page-head">
           <h2>시뮬레이션 엔진</h2>
           <div class="page-desc">서버 안에서 1초마다 tick하며 로트를 자동 투입·진행시키고, 설비 고장/복구, 품질검사까지 스스로 수행합니다.</div>
+        </div>
+        <div class="page-desc" style="margin-bottom:12px;">
+          <b>학습용 축소 모델입니다.</b> 공정은 ETCH→CVD→CMP→INSPECT를 한 번만 통과하고(실제 fab은 같은 설비군을 여러 번 다시 방문하는 재진입 구조),
+          아래 설정값(도착 간격, 공정 시간, 고장 확률, 불량률, WIP 상한)은 공개 자료로 뒷받침되지 않는 <b>시간 압축 데모 값</b>입니다.
+          이 값으로 나온 수율·가용도·OEE·처리량은 실제 fab 성능이 아닙니다.
         </div>
         <div class="sim-panel">
           <div class="sim-controls">
@@ -1026,6 +1036,7 @@ function fmtDuration(sec) {
 const RISK_LABEL = { CRITICAL: "긴급", HIGH: "높음", MEDIUM: "보통", LOW: "낮음" };
 const REJECT_REASONS = ["이미 조치함", "오탐(잘못된 경고)", "근거 부족", "지금은 실행 불가", "기타"];
 let approvalTab = "PENDING";
+let towerDecisions = [];
 let approvalOpenForm = null; // { id, mode: "reject" | "edit" } — pauses re-render so typing isn't wiped
 
 function renderApprovalNavBadge(count) {
@@ -1050,12 +1061,18 @@ function renderApprovals(rows, summary, force = false) {
     <div class="card"><div class="k">긴급 / 높음</div><div class="v">${summary.pending_by_risk.CRITICAL} / ${summary.pending_by_risk.HIGH}</div></div>
     <div class="card"><div class="k">승인 · 반려 · 만료</div><div class="v">${summary.approved_total} · ${summary.rejected_total} · ${summary.expired_total}</div></div>`;
 
-  const tabs = [["PENDING", `대기 (${summary.pending_count})`], ["DECIDED", "처리 완료"]];
+  const tabs = [["PENDING", `대기 (${summary.pending_count})`], ["DECIDED", "처리 완료"], ["TOWER", `컨트롤타워 판단 (${towerDecisions.length})`]];
   document.getElementById("ap-tabs").innerHTML = tabs.map(([k, label]) =>
     `<button class="ap-tab${approvalTab === k ? " active" : ""}" data-aptab="${k}">${label}</button>`).join("");
 
   // A poll must not wipe a half-typed reason; a click (force) must still draw the form.
   if (approvalOpenForm && !force) return;
+  if (approvalTab === "TOWER") {
+    document.getElementById("ap-list").innerHTML = towerDecisions.length
+      ? towerDecisions.map(towerDecisionCard).join("")
+      : `<div class="ap-empty">아직 컨트롤타워가 내린 판단이 없습니다. 에이전트 제안이 생기면 여기에 기록됩니다.</div>`;
+    return;
+  }
   const list = approvalTab === "PENDING"
     ? rows.filter(r => r.status === "PENDING")
     : rows.filter(r => r.status !== "PENDING").sort((a, b) => parseUtc(b.decided_at || b.created_at) - parseUtc(a.decided_at || a.created_at));
@@ -1067,6 +1084,19 @@ function renderApprovals(rows, summary, force = false) {
     return;
   }
   el.innerHTML = list.map(r => approvalTab === "PENDING" ? approvalPendingCard(r) : approvalDecidedCard(r)).join("");
+}
+
+function towerDecisionCard(d) {
+  const label = { BLOCK: "차단", AUTO_RECORD: "자동 기록", QUEUE: "승인 큐" }[d.disposition] || d.disposition;
+  return `<div class="ap-card ${escapeHtml(d.risk_level)}">
+    <div class="ap-head">
+      <span class="ct-badge ${escapeHtml(d.disposition)}">${escapeHtml(d.disposition)}</span>
+      <span class="ap-title">${escapeHtml(d.equipment_name || "설비 없음")}</span>
+      <span class="ap-meta">${escapeHtml(label)} · ${RISK_LABEL[d.risk_level] || escapeHtml(d.risk_level)}</span>
+    </div>
+    <div class="ap-row"><b>이유</b>${escapeHtml(d.reason)}</div>
+    <div class="ap-meta">제안 에이전트: ${d.contributing_agents.map(escapeHtml).join(", ")} · ${parseUtc(d.decided_at).toLocaleString("ko-KR")}</div>
+  </div>`;
 }
 
 function approvalPendingCard(r) {
@@ -1156,7 +1186,7 @@ document.addEventListener("click", e => {
 /* ---------------- main poll loop ---------------- */
 async function tick() {
   try {
-    const [metrics, equipment, workOrders, lots, quality, anomalies, anomalyLog, sim, approvalRows, approvalSummary] = await Promise.all([
+    const [metrics, equipment, workOrders, lots, quality, anomalies, anomalyLog, sim, approvalRows, approvalSummary, decisions] = await Promise.all([
       getJSON("/metrics"),
       getJSON("/equipment"),
       getJSON("/work-orders"),
@@ -1167,7 +1197,9 @@ async function tick() {
       getJSON("/simulation/status"),
       getJSON("/approvals"),
       getJSON("/approvals/summary"),
+      getJSON("/control-tower/decisions"),
     ]);
+    towerDecisions = decisions;
     renderCards(metrics, quality);
     renderSimulation(sim);
     renderProcessFlow(lots);

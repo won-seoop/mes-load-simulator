@@ -18,6 +18,11 @@ Samsung SDS Nexplant MES가 다루는 도메인 개념(설비 가동률, 로트/
 클라우드 스케줄러(Claude Code Routine)가 매일 오전 7시(KST)에 이 저장소를 체크아웃해서
 `scripts/run_daily_test.sh`를 실행하고, 결과를 `reports/`에 커밋한 뒤 Notion에 요약을 정리합니다.
 
+> **시뮬레이션 값에 대한 주의**: 자율 시뮬레이션은 학습용 축소 모델입니다. 공정은 ETCH→CVD→CMP→INSPECT를
+> 한 번만 통과하고(실제 fab은 재진입 구조), 도착 간격·공정 시간·고장 확률·불량률·WIP 상한은 공개 자료로
+> 뒷받침되지 않는 시간 압축 데모 값입니다. 여기서 나온 수율·가용도·OEE·처리량은 실제 fab 성능이 아닙니다.
+> 공개 자료로 확인된 부분은 공정 종류, SEMI E10 설비 상태 분류, MTBF/MTTR, Little's law, 수율 정의뿐입니다.
+
 ## Domain Model
 
 - **Equipment**: 공정 스텝(ETCH → CVD → CMP → INSPECT)별 설비, 상태, 가동시간과 Dispatch Count
