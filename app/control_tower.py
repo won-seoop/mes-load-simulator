@@ -11,7 +11,7 @@ plan() is pure; process() adds the DB writes.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -158,13 +158,19 @@ def _is_repeat(db: Session, d: PlannedDecision, approval_id: Optional[int]) -> b
 
 
 def process(
-    db: Session, proposals: list[Proposal], now: Optional[datetime] = None
+    db: Session,
+    proposals: list[Proposal],
+    now: Optional[datetime] = None,
+    advisor: Optional[Callable[[list[PlannedDecision]], list[PlannedDecision]]] = None,
 ) -> list[ControlTowerDecision]:
     """Plan, queue what must reach a human, and persist each decision.
     Returns the rows written (an unchanged repeat of the last decision is not rewritten)."""
     now = now or datetime.utcnow()
     written: list[ControlTowerDecision] = []
-    for d in plan(proposals):
+    planned = plan(proposals)
+    if advisor is not None:
+        planned = advisor(planned)  # may raise the risk level; never lowers it or un-blocks
+    for d in planned:
         approval_id = None
         reason = d.reason
         if d.disposition == QUEUE:

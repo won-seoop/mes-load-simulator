@@ -284,3 +284,24 @@ class ControlTowerDecision(Base):
     contributing_agents = Column(String, nullable=False)  # comma-separated
     risk_level = Column(String, nullable=False)
     approval_id = Column(Integer, ForeignKey("approval_request.id"), nullable=True)
+
+
+class LlmAgentRun(Base):
+    """One call of the LLM root-cause agent, kept so it can be compared with the
+    rule-based baseline: was it usable, how long did it take, what did it cost
+    (tokens), and did it cite only facts it was given."""
+
+    __tablename__ = "llm_agent_run"
+
+    id = Column(Integer, primary_key=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=True, index=True)
+    role = Column(String, nullable=False, default="root-cause", index=True)  # root-cause | tower-advisor
+    model = Column(String, nullable=False)
+    status = Column(String, nullable=False, index=True)  # OK/ERROR/INVALID_OUTPUT/UNGROUNDED
+    latency_ms = Column(Float, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    hypothesis = Column(Text, nullable=True)
+    recommended_action = Column(String, nullable=True)
+    detail = Column(String, nullable=True)  # why it was rejected, or the error

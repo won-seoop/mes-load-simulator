@@ -1359,6 +1359,23 @@ def list_control_tower_decisions(db: Session = Depends(get_db)):
     )
 
 
+@app.get("/llm-agent/runs")
+def list_llm_agent_runs(db: Session = Depends(get_db)):
+    """Latest LLM agent calls (status, latency, tokens) for comparing it with the rule baseline."""
+    from app.models import LlmAgentRun
+
+    rows = db.query(LlmAgentRun).order_by(LlmAgentRun.id.desc()).limit(100).all()
+    return [
+        {
+            "id": r.id, "created_at": r.created_at, "equipment_id": r.equipment_id, "model": r.model,
+            "status": r.status, "latency_ms": r.latency_ms, "input_tokens": r.input_tokens,
+            "output_tokens": r.output_tokens, "hypothesis": r.hypothesis,
+            "recommended_action": r.recommended_action, "detail": r.detail,
+        }
+        for r in rows
+    ]
+
+
 @app.post("/simulation/start")
 async def start_simulation():
     """Start the autonomous simulation engine (app/simulation.py).
