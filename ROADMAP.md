@@ -305,9 +305,29 @@
       창(10분)과 임계값(3/4/6회)은 시뮬레이터 고장률에 맞춘 데모 값이며 근거가 있는 기준이 아니다.
       병합 승인 요청은 설비 단위 `dedupe_key`를 쓰므로 기존 대기 중이던 `quality-anomaly:<id>` 키의 요청과는
       이어지지 않는다.
+- [x] (2026-09-26) `agent_gateway/`(read-only MCP Gateway)에 설비·이상이력·승인 큐 조회 Tool 6개를
+      추가했다. 2026-09-25 HITL 항목이 "한계"로 남겨둔 gap이다 — 그때까지 Gateway는
+      `get_quality_anomalies`(매 호출 재계산되는 Live 이상탐지)만 있었고, 설비 상태/MTBF·MTTR,
+      영구 이상 이력(`AnomalyLog`), 승인 큐, 컨트롤타워 판정은 MCP로 조회할 방법이 없어서 향후
+      LLM 에이전트가 근거를 모으려면 결국 REST를 직접 호출해야 했다. `get_equipment_status`,
+      `get_equipment_downtime`, `get_anomaly_log`, `get_approval_queue`(status 필터),
+      `get_approval_summary`, `get_control_tower_decisions`를 각각 기존 `/equipment`,
+      `/equipment/{id}/downtime`, `/quality/anomaly-log`, `/approvals`, `/approvals/summary`,
+      `/control-tower/decisions` REST 엔드포인트에 얇게 위임하는 방식으로 추가했다(새 서버 로직
+      없음 — Gateway는 여전히 read-only 원칙 유지, 조회 권한 범위만 넓어짐). 검증: 실행 중인
+      서버에 대해 `agent_gateway/smoke_test.py`를 갱신해 9개 Tool 전체 이름을 assert하고
+      `get_equipment_status`(12건 반환)·`get_approval_summary`·`get_control_tower_decisions`
+      실제 호출까지 확인했고, `get_equipment_downtime`/`get_approval_queue(status=...)`처럼
+      인자가 있는 Tool은 별도 스크립트로 실제 값(`equipment_id=1`, `status=PENDING`) 호출까지
+      확인했다. pytest는 `agent_gateway/`를 수집하지 않으므로(`pytest.ini`) 영향 없이 167개
+      그대로 통과, 50 VU/3분 파이프라인도 실패율 0%/Server 5xx·IntegrityError 0으로 재확인했다.
+      한계: 여전히 Command(작업지시 Release, 설비 상태 변경, 승인 결정)는 Gateway에 없다 — 의도적.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
+- [ ] Gateway에 추가한 `get_approval_queue`/`get_control_tower_decisions`를 실제로 사용하는
+      LLM 에이전트(또는 A2A Quality Investigation Agent)가 승인 큐 상태를 근거로 삼아 조사
+      결과를 보강하는 예시를 만들어본다 (지금은 Tool만 있고 이를 소비하는 에이전트 로직은 없음)
 - [ ] A2A Quality Investigation Agent: Agent Card, Task 상태, 조사 Artifact와 승인 Gate
 - [ ] C# UI LOT 검색/Event Timeline과 Work Order 상세 화면
 - [ ] 품질 이상 신호에서 관련 LOT/검사/Event 자동 Drill-down

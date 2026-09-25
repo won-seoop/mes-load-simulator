@@ -16,6 +16,12 @@ async def main() -> None:
             "get_quality_anomalies",
             "get_lot_trace",
             "list_work_orders",
+            "get_equipment_status",
+            "get_equipment_downtime",
+            "get_anomaly_log",
+            "get_approval_queue",
+            "get_approval_summary",
+            "get_control_tower_decisions",
         }
 
         resources = await client.list_resources()
@@ -28,11 +34,29 @@ async def main() -> None:
         else:
             payload = json.loads(result.content[0].text)
         anomalies = payload["anomalies"]
+
+        equipment_result = await client.call_tool("get_equipment_status", {})
+        assert not equipment_result.is_error
+        if equipment_result.structured_content is not None:
+            equipment_payload = equipment_result.structured_content.get(
+                "result", equipment_result.structured_content
+            )
+        else:
+            equipment_payload = json.loads(equipment_result.content[0].text)
+        assert isinstance(equipment_payload, list) and len(equipment_payload) > 0
+
+        summary_result = await client.call_tool("get_approval_summary", {})
+        assert not summary_result.is_error
+
+        decisions_result = await client.call_tool("get_control_tower_decisions", {})
+        assert not decisions_result.is_error
+
         print(
             {
                 "tools": sorted(tool_names),
                 "resources": [str(resource.uri) for resource in resources.resources],
                 "anomalies": anomalies,
+                "equipment_count": len(equipment_payload),
             }
         )
 

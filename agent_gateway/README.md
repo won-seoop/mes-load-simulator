@@ -8,9 +8,15 @@ MCP는 Agent 간 작업 위임 프로토콜이 아니라, Host가 MES 데이터�
 
 - Resource `mes://overview`: 생산 KPI, 품질 KPI, 이상탐지 결과
 - Resource Template `mes://lots/{lot_id}/trace`: LOT 상태·Event·검사 이력
-- Tool `get_quality_anomalies`: 장비별 이상 신호와 판정 Threshold
+- Tool `get_quality_anomalies`: 장비별 이상 신호와 판정 Threshold (매 호출마다 재계산되는 Live Snapshot)
 - Tool `get_lot_trace`: 이상 LOT 원인 추적
 - Tool `list_work_orders`: 최근 작업지시 조회
+- Tool `get_equipment_status`: 설비 전체 상태·OEE 입력값(Availability/Performance)·MTBF/MTTR
+- Tool `get_equipment_downtime`: 설비 1대의 다운타임 이력(Open/Closed, 최신순)
+- Tool `get_anomaly_log`: 이상탐지가 처음 발견된 시점까지 남는 영구 이력(`get_quality_anomalies`와 달리 저장됨)
+- Tool `get_approval_queue`: Human-in-the-Loop 승인 큐 조회(status로 PENDING/APPROVED/REJECTED/EXPIRED 필터)
+- Tool `get_approval_summary`: 승인 큐 상태별·위험도별 집계
+- Tool `get_control_tower_decisions`: 컨트롤타워의 BLOCK/AUTO_RECORD/QUEUE 판정 이력(병합 근거 포함)
 
 현재 단계는 의도적으로 read-only다. 작업지시 Release, 설비 상태 변경, Scrap/Rework 같은 생산 Command를
 LLM이 직접 실행하지 않는다.

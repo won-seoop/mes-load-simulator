@@ -8,6 +8,7 @@ quality disposition stay behind the MES API's explicit command boundary.
 import json
 import os
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from mcp.server.mcpserver import MCPServer
@@ -73,6 +74,50 @@ def list_work_orders(limit: int = 20) -> list[dict]:
     if limit < 1 or limit > 100:
         raise ValueError("limit must be between 1 and 100")
     return _get("/work-orders")[:limit]
+
+
+@mcp.tool()
+def get_equipment_status() -> list[dict]:
+    """List all equipment with current RUN/IDLE/DOWN status, OEE inputs
+    (Availability/Performance) and reliability (MTBF/MTTR, downtime by reason)."""
+    return _get("/equipment")
+
+
+@mcp.tool()
+def get_equipment_downtime(equipment_id: int) -> list[dict]:
+    """Downtime history (open and closed) for one equipment, most recent first."""
+    return _get(f"/equipment/{int(equipment_id)}/downtime")
+
+
+@mcp.tool()
+def get_anomaly_log(limit: int = 20) -> list[dict]:
+    """Persisted quality anomaly history (when an anomaly first showed up),
+    unlike get_quality_anomalies which is a live snapshot recomputed on every call."""
+    if limit < 1 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
+    return _get("/quality/anomaly-log")[:limit]
+
+
+@mcp.tool()
+def get_approval_queue(status: str | None = None) -> list[dict]:
+    """List human-in-the-loop approval requests proposed by MES agents.
+    Optionally filter by status: PENDING, APPROVED, REJECTED or EXPIRED."""
+    if status:
+        return _get(f"/approvals?status={quote(status)}")
+    return _get("/approvals")
+
+
+@mcp.tool()
+def get_approval_summary() -> dict:
+    """Counts of approval requests by status and risk level."""
+    return _get("/approvals/summary")
+
+
+@mcp.tool()
+def get_control_tower_decisions() -> list[dict]:
+    """Recent control tower BLOCK/AUTO_RECORD/QUEUE decisions, most recent first,
+    including merged agent evidence for decisions that combined multiple proposals."""
+    return _get("/control-tower/decisions")
 
 
 if __name__ == "__main__":
