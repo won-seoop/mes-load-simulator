@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta
 
+import pytest
+
 from app.database import SessionLocal
 from app.models import ApprovalRequest
 from app.simulation import SimulationEngine
@@ -149,6 +151,48 @@ def test_summary_with_empty_queue_reports_no_oldest_age(client):
     s = client.get("/approvals/summary").json()
     assert s["pending_count"] == 0
     assert s["oldest_pending_age_seconds"] is None
+    assert s["approval_rate"] is None
+    assert s["edit_rate"] is None
+    assert s["avg_decision_wait_seconds"] is None
+    assert s["fast_approval_rate"] is None
+
+
+def test_summary_reports_approval_rate_and_edit_rate(client):
+    a = client.post("/approvals", json=_payload(dedupe_key="a")).json()
+    b = client.post("/approvals", json=_payload(dedupe_key="b")).json()
+    c = client.post("/approvals", json=_payload(dedupe_key="c")).json()
+    client.post(f"/approvals/{a['id']}/decision", json={"action": "approve"})
+    client.post(
+        f"/approvals/{b['id']}/decision",
+        json={"action": "approve", "edited_proposal": "수정된 조치"},
+    )
+    client.post(f"/approvals/{c['id']}/decision", json={"action": "reject", "reason": "오탐"})
+
+    s = client.get("/approvals/summary").json()
+    assert s["approved_total"] == 2
+    assert s["rejected_total"] == 1
+    assert s["approval_rate"] == pytest.approx(2 / 3)
+    assert s["edit_rate"] == pytest.approx(1 / 2)
+
+
+def test_summary_reports_decision_wait_and_flags_fast_approvals(client):
+    slow = client.post("/approvals", json=_payload(dedupe_key="slow")).json()
+    db = SessionLocal()
+    try:
+        row = db.get(ApprovalRequest, slow["id"])
+        row.created_at = datetime.utcnow() - timedelta(seconds=30)
+        db.commit()
+    finally:
+        db.close()
+    client.post(f"/approvals/{slow['id']}/decision", json={"action": "approve"})
+
+    fast = client.post("/approvals", json=_payload(dedupe_key="fast")).json()
+    client.post(f"/approvals/{fast['id']}/decision", json={"action": "approve"})
+
+    s = client.get("/approvals/summary").json()
+    assert s["approved_total"] == 2
+    assert s["avg_decision_wait_seconds"] > 10
+    assert s["fast_approval_rate"] == pytest.approx(0.5)
 
 
 def test_quality_anomaly_creates_one_request_that_counts_up_not_duplicates(client, monkeypatch):

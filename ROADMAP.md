@@ -322,12 +322,45 @@
       확인했다. pytest는 `agent_gateway/`를 수집하지 않으므로(`pytest.ini`) 영향 없이 167개
       그대로 통과, 50 VU/3분 파이프라인도 실패율 0%/Server 5xx·IntegrityError 0으로 재확인했다.
       한계: 여전히 Command(작업지시 Release, 설비 상태 변경, 승인 결정)는 Gateway에 없다 — 의도적.
+- [x] (2026-09-27) 승인 큐 지표(승인율·수정율·평균 결정 대기시간·너무 빠른 승인 비율) 집계 추가.
+      기존 `/approvals/summary`는 대기/처리 건수(`pending_count`, `approved_total`,
+      `rejected_total`, `expired_total`, `edited_total`)만 있어서 "이 승인 큐가 실제로 사람의
+      건전한 검토를 거치고 있는지"는 알 수 없었다(예: 위험도 높은 제안이 늘 즉시 승인되면 그건
+      운영자가 실제로 근거를 읽은 게 아니라 그냥 통과시키는 것일 수 있다 — HITL 트랙의 핵심 전제인
+      "사람이 실제로 검토한다"를 뒷받침할 지표가 없었다). `app/approvals.py.summary()`에 네 값을
+      추가했다: `approval_rate`(승인 / (승인+반려), 만료는 사람의 결정이 아니라서 분모 제외),
+      `edit_rate`(수정 후 승인 / 승인), `avg_decision_wait_seconds`(결정된 요청의
+      `decided_at - created_at` 평균), `fast_approval_rate`(승인까지 걸린 시간이
+      `FAST_APPROVAL_THRESHOLD_SECONDS=5`초 미만이었던 승인의 비율 — 제목+근거 한 줄을 읽는 데
+      걸리는 최소 시간을 데모로 잡은 임계값이며, 실제 운영자 타이밍 연구에 근거한 검증된 기준이
+      아니라는 점을 코드 주석에 명시했다). 값이 없으면(결정된 요청이 아직 없음) 0이 아니라
+      `None`을 반환한다. 대시보드 "승인 큐" 화면 요약 카드에 세 항목(승인율·수정율, 평균 결정
+      대기시간, 너무 빠른 승인 비율)을 추가로 노출했다. 검증: `tests/test_approvals.py`에 3건
+      추가(빈 큐일 때 네 값 모두 `None`, 승인 2/반려 1 + 수정 1건으로 승인율 2/3·수정율 1/2 확인,
+      `created_at`을 30초 전으로 옮긴 요청과 즉시 승인한 요청을 섞어 평균 대기시간 > 10초·
+      `fast_approval_rate=0.5` 확인) — pytest 171 -> 173개 전체 통과. 살아있는 서버에 curl로
+      직접 승인 1건을 만들고 결정해 실제 JSON 응답의 네 필드가 기대한 값(승인율 1.0, 평균 대기
+      0.03초, `fast_approval_rate=1.0`)으로 나오는 것도 확인했다. `agent_gateway`의
+      `get_approval_summary`는 `/approvals/summary`를 그대로 위임하는 얇은 Tool이라 새 필드가
+      코드 변경 없이 그대로 노출된다. 50 VU/3분 파이프라인도 재확인(실패율 0%, RPS 89.37,
+      p95 61ms/p99 140ms, Server 5xx/IntegrityError 0) — 이 부하 시나리오 자체는 승인 큐를
+      건드리지 않으므로(자율 시뮬레이션 엔진을 켜야 품질 에이전트가 승인 요청을 만든다) 이번
+      리포트의 승인 큐 지표는 관측되지 않는다. 한계: 이 지표들은 아직 대시보드에만 있고
+      `agent_gateway`나 일일 리포트(`summarize.py`)에는 아직 노출하지 않았다 — 승인 큐가 비어
+      있는 날이 많아 일일 리포트에 넣어도 대부분 `None`으로 찍힐 것이라 판단해 보류했다.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
 - [ ] Gateway에 추가한 `get_approval_queue`/`get_control_tower_decisions`를 실제로 사용하는
       LLM 에이전트(또는 A2A Quality Investigation Agent)가 승인 큐 상태를 근거로 삼아 조사
       결과를 보강하는 예시를 만들어본다 (지금은 Tool만 있고 이를 소비하는 에이전트 로직은 없음)
+- [ ] 승인 큐 Audit Trail: 지금은 `ApprovalRequest` 한 행이 결정 하나만 담아서(`decided_by`,
+      `decided_at`, `decision_reason`) "누가 언제 무엇을 왜 바꿨는지"의 이력 자체는 남지만 별도
+      Audit 테이블로 분리되어 있지 않다 — 승인 큐 밖의 변경(예: 설비 상태 수동 PATCH, 작업지시
+      Release)까지 포함하는 통합 Audit Trail을 추가할지 검토
+- [ ] 오늘 추가한 승인 큐 지표(승인율/수정율/대기시간/너무 빠른 승인 비율)를 시뮬레이션 엔진이
+      자동으로 승인 요청을 만들도록 데모 시나리오를 하루 이상 돌려 실제 0이 아닌 값으로 채워보고,
+      `fast_approval_rate` 임계값(5초)이 데모 시나리오에서 그럴듯한 값을 만드는지 확인
 - [ ] A2A Quality Investigation Agent: Agent Card, Task 상태, 조사 Artifact와 승인 Gate
 - [ ] C# UI LOT 검색/Event Timeline과 Work Order 상세 화면
 - [ ] 품질 이상 신호에서 관련 LOT/검사/Event 자동 Drill-down

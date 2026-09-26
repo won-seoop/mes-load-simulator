@@ -20,6 +20,13 @@ RISK_ORDER = {
 }
 VALID_ACTIONS = {"approve", "reject"}
 
+# A decision made faster than this after the request first appeared is flagged as
+# "too fast to have actually reviewed the evidence" (rubber-stamping risk). This
+# project has no real-operator timing study behind it; 5s is a demo threshold
+# (roughly the minimum time to read a one-line title + evidence string), not a
+# validated ergonomic figure.
+FAST_APPROVAL_THRESHOLD_SECONDS = 5.0
+
 
 class ApprovalNotFound(Exception):
     pass
@@ -186,6 +193,39 @@ def summary(db: Session, now: Optional[datetime] = None) -> dict:
         count(ApprovalStatus.REJECTED),
         count(ApprovalStatus.EXPIRED),
     )
+
+    # Human decision quality signals. `expired` is excluded from approval/edit rate:
+    # it is the system giving up on a stale request, not a person deciding anything.
+    human_decided = approved + rejected
+    approval_rate = (approved / human_decided) if human_decided else None
+    edit_rate = (edited / approved) if approved else None
+
+    decided_rows = (
+        db.query(ApprovalRequest)
+        .filter(
+            ApprovalRequest.status.in_(
+                [ApprovalStatus.APPROVED.value, ApprovalStatus.REJECTED.value]
+            )
+        )
+        .all()
+    )
+    wait_seconds = [
+        (r.decided_at - r.created_at).total_seconds() for r in decided_rows if r.decided_at
+    ]
+    avg_decision_wait_seconds = (sum(wait_seconds) / len(wait_seconds)) if wait_seconds else None
+
+    approved_wait_seconds = [
+        (r.decided_at - r.created_at).total_seconds()
+        for r in decided_rows
+        if r.decided_at and r.status == ApprovalStatus.APPROVED.value
+    ]
+    fast_approval_rate = (
+        sum(1 for w in approved_wait_seconds if w < FAST_APPROVAL_THRESHOLD_SECONDS)
+        / len(approved_wait_seconds)
+        if approved_wait_seconds
+        else None
+    )
+
     return {
         "pending_count": len(pending),
         "oldest_pending_age_seconds": (now - oldest).total_seconds() if oldest else None,
@@ -195,4 +235,8 @@ def summary(db: Session, now: Optional[datetime] = None) -> dict:
         "rejected_total": rejected,
         "expired_total": expired,
         "edited_total": edited,
+        "approval_rate": approval_rate,
+        "edit_rate": edit_rate,
+        "avg_decision_wait_seconds": avg_decision_wait_seconds,
+        "fast_approval_rate": fast_approval_rate,
     }

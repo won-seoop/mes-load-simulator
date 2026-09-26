@@ -289,6 +289,10 @@ class ApprovalSummaryOut(BaseModel):
     rejected_total: int
     expired_total: int
     edited_total: int
+    approval_rate: Optional[float]
+    edit_rate: Optional[float]
+    avg_decision_wait_seconds: Optional[float]
+    fast_approval_rate: Optional[float]
 
 
 class ControlTowerDecisionOut(BaseModel):
