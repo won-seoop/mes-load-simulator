@@ -252,16 +252,51 @@ def test_simulation_survives_an_llm_failure_and_still_queues_the_rule_request(cl
 def test_each_role_gets_its_own_model_and_env_overrides_it(monkeypatch):
     for var in ("LLM_MODEL_ROOT_CAUSE", "LLM_MODEL_TOWER"):
         monkeypatch.delenv(var, raising=False)
-    assert llm_agent.model_for("root-cause") == "claude-sonnet-5"
-    assert llm_agent.model_for("tower-advisor") == "claude-opus-5-5"
-    monkeypatch.setenv("LLM_MODEL_TOWER", "claude-sonnet-5")
-    assert llm_agent.model_for("tower-advisor") == "claude-sonnet-5"
-    assert llm_agent.model_for("root-cause") == "claude-sonnet-5"
+    assert llm_agent.model_for("root-cause") == "anthropic:claude-sonnet-5"
+    assert llm_agent.model_for("tower-advisor") == "anthropic:claude-opus-5-5"
+    monkeypatch.setenv("LLM_MODEL_TOWER", "openai:gpt-6-sol")
+    assert llm_agent.model_for("tower-advisor") == "openai:gpt-6-sol"
+    assert llm_agent.model_for("root-cause") == "anthropic:claude-sonnet-5"
 
 
-def test_get_client_builds_each_role_with_its_model(monkeypatch):
+def test_build_client_picks_the_provider_and_needs_its_credentials(monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "LLM_COMPAT_BASE_URL", "LLM_COMPAT_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    assert llm_agent.build_client("anthropic:claude-sonnet-5") is None
+    assert llm_agent.build_client("openai:gpt-6-sol") is None
+    assert llm_agent.build_client("compat:gpt-oss-20b") is None
+    assert llm_agent.build_client("nope:model") is None
+
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    c = llm_agent.build_client("openai:gpt-6-sol")
+    assert isinstance(c, llm_agent.OpenAICompatClient) and c.model == "openai:gpt-6-sol"
+    assert c._url == "https://api.openai.com/v1/chat/completions" and c._token_param == "max_completion_tokens"
+
+    monkeypatch.setenv("LLM_COMPAT_BASE_URL", "http://127.0.0.1:11434/v1/")
+    c = llm_agent.build_client("compat:gpt-oss-20b")
+    assert c._url == "http://127.0.0.1:11434/v1/chat/completions" and c._key is None
+    assert c._token_param == "max_tokens"
+
+
+def test_bare_model_name_still_means_anthropic(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    built = []
+
+    class Spy:
+        def __init__(self, key, model, max_tokens):
+            built.append(model)
+            self.model = model
+
+    monkeypatch.setattr(llm_agent, "AnthropicClient", Spy)
+    llm_agent.build_client("claude-sonnet-5")
+    assert built == ["claude-sonnet-5"]
+
+
+def test_get_client_builds_each_role_from_its_spec(monkeypatch):
     monkeypatch.setenv("LLM_AGENT_ENABLED", "1")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.delenv("LLM_MODEL_ROOT_CAUSE", raising=False)
+    monkeypatch.delenv("LLM_MODEL_TOWER", raising=False)
     built = []
 
     class Spy:
@@ -270,9 +305,65 @@ def test_get_client_builds_each_role_with_its_model(monkeypatch):
             self.model = model
 
     monkeypatch.setattr(llm_agent, "AnthropicClient", Spy)
-    monkeypatch.delenv("LLM_MODEL_ROOT_CAUSE", raising=False)
-    monkeypatch.delenv("LLM_MODEL_TOWER", raising=False)
     llm_agent.get_client("root-cause")
     llm_agent.get_client("tower-advisor")
     assert [m for m, _ in built] == ["claude-sonnet-5", "claude-opus-5-5"]
     assert built[0][1] == llm_agent.DEFAULT_MAX_TOKENS
+
+
+def _serve(handler_body):
+    """A real local HTTP server speaking a minimal Chat Completions API."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    seen = {}
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            length = int(self.headers["Content-Length"])
+            seen["path"] = self.path
+            seen["auth"] = self.headers.get("Authorization")
+            seen["body"] = json.loads(self.rfile.read(length))
+            status, payload = handler_body(seen["body"])
+            raw = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+        def log_message(self, *a):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, seen
+
+
+def test_compat_client_speaks_chat_completions_and_reads_usage():
+    server, seen = _serve(lambda body: (200, {
+        "choices": [{"message": {"content": _ok()}}], "usage": {"prompt_tokens": 77, "completion_tokens": 33}}))
+    try:
+        c = llm_agent.OpenAICompatClient("compat:m", f"http://127.0.0.1:{server.server_port}/v1", "secret", "m", 123)
+        text, tin, tout = c.complete("SYS", "USER")
+    finally:
+        server.shutdown()
+    assert (tin, tout) == (77, 33) and "hypothesis" in text
+    assert seen["path"] == "/v1/chat/completions" and seen["auth"] == "Bearer secret"
+    body = seen["body"]
+    assert body["model"] == "m" and body["max_tokens"] == 123
+    assert [m["role"] for m in body["messages"]] == ["system", "user"]
+    assert "temperature" not in body  # reasoning models reject sampling options
+
+
+def test_compat_client_without_key_sends_no_auth_header_and_http_errors_become_error_runs(client, db):
+    server, seen = _serve(lambda body: (500, {"error": "boom"}))
+    try:
+        c = llm_agent.OpenAICompatClient("compat:m", f"http://127.0.0.1:{server.server_port}/v1", None, "m")
+        _, rule = _rule(db, client)
+        assert llm_agent.propose(db, c, [rule], T0) == []
+    finally:
+        server.shutdown()
+    assert seen["auth"] is None
+    run = _runs(db)[0]
+    assert run.status == "ERROR" and run.model == "compat:m"

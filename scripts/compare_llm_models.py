@@ -1,7 +1,12 @@
 """Compare models for one role on the same facts, so the model choice is measured.
 
-    ANTHROPIC_API_KEY=... python scripts/compare_llm_models.py \
-        --role tower-advisor --models claude-sonnet-5 claude-opus-5-5 --runs 5
+    ANTHROPIC_API_KEY=... OPENAI_API_KEY=... python scripts/compare_llm_models.py \
+        --role tower-advisor --runs 5 \
+        --models anthropic:claude-sonnet-5 anthropic:claude-opus-5-5 openai:gpt-6-sol openai:gpt-6-astra
+
+    # a local model behind an OpenAI-compatible server (Ollama, vLLM, LM Studio):
+    LLM_COMPAT_BASE_URL=http://127.0.0.1:11434/v1 python scripts/compare_llm_models.py \
+        --models compat:gpt-oss-20b
 
 Nothing is written to any database. For each model it reports, over --runs calls
 on the same fixed cases: how often the answer was usable, how often it cited a
@@ -52,9 +57,9 @@ CASES = [
 
 
 def run(model: str, role: str, runs: int, max_tokens: int, price):
-    from app.llm_agent import AnthropicClient
-
-    client = AnthropicClient(os.environ["ANTHROPIC_API_KEY"], model, max_tokens)
+    client = llm_agent.build_client(model)
+    if client is None:
+        return [dict(case="-", status="ERROR", detail="client unavailable: credentials or endpoint missing")]
     system = llm_agent.TOWER_SYSTEM_PROMPT if role == "tower-advisor" else llm_agent.SYSTEM_PROMPT
     rows = []
     for name, facts, _ in CASES:
@@ -113,8 +118,7 @@ if __name__ == "__main__":
     ap.add_argument("--max-tokens", type=int, default=llm_agent.DEFAULT_MAX_TOKENS)
     ap.add_argument("--price", action="append", default=[], help="MODEL=INPUT,OUTPUT  ($/M tokens)")
     a = ap.parse_args()
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        sys.exit("ANTHROPIC_API_KEY is not set")
+    os.environ["LLM_MAX_TOKENS"] = str(a.max_tokens)
     prices = {}
     for spec in a.price:
         m, v = spec.split("=")

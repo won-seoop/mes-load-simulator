@@ -51,8 +51,15 @@ AGENT_NAME = "llm:root-cause"
 #   controlled evidence that a larger model synthesizes better, so scripts/compare_llm_models.py
 #   measures it before it is trusted.
 # Detection itself (defect-rate and downtime rules) stays statistical and uses no LLM.
-DEFAULT_MODELS = {"root-cause": "claude-sonnet-5", "tower-advisor": "claude-opus-5-5"}
+DEFAULT_MODELS = {"root-cause": "anthropic:claude-sonnet-5", "tower-advisor": "anthropic:claude-opus-5-5"}
 MODEL_ENV = {"root-cause": "LLM_MODEL_ROOT_CAUSE", "tower-advisor": "LLM_MODEL_TOWER"}
+# A model spec is "provider:model" (a bare name means anthropic):
+#   anthropic:<model>  ANTHROPIC_API_KEY
+#   openai:<model>     OPENAI_API_KEY, https://api.openai.com/v1
+#   compat:<model>     any OpenAI-compatible server (Ollama, vLLM, LM Studio, a hosted gateway):
+#                      LLM_COMPAT_BASE_URL (required), LLM_COMPAT_API_KEY (optional)
+# Keeping the provider a config value lets the same cases be compared across vendors and
+# lets a factory keep data on-premise by pointing a role at a local model.
 # Adaptive thinking on the larger models spends output tokens before the answer text.
 DEFAULT_MAX_TOKENS = 2000
 # Demo values: do not analyze the same equipment again inside this window, to bound cost.
@@ -86,13 +93,14 @@ class AnthropicClient:
     def __init__(self, api_key: str, model: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> None:
         import anthropic  # imported lazily so the app and tests work without the SDK
 
-        self.model = model
+        self.model = f"anthropic:{model}"
+        self._api_model = model
         self._max_tokens = max_tokens
         self._client = anthropic.Anthropic(api_key=api_key, timeout=REQUEST_TIMEOUT_SECONDS)
 
     def complete(self, system: str, user: str) -> tuple[str, Optional[int], Optional[int]]:
         msg = self._client.messages.create(
-            model=self.model,
+            model=self._api_model,
             max_tokens=self._max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
@@ -102,19 +110,79 @@ class AnthropicClient:
 
 
 def model_for(role: str) -> str:
+    """The configured "provider:model" spec for a role."""
     return os.environ.get(MODEL_ENV[role], DEFAULT_MODELS[role])
 
 
+class OpenAICompatClient:
+    """Chat Completions over plain HTTP: OpenAI itself and any compatible server.
+
+    No SDK dependency. Only the model, messages and a token limit are sent, so
+    reasoning models that reject temperature and other sampling options work."""
+
+    def __init__(self, label: str, base_url: str, api_key: Optional[str], model: str,
+                 max_tokens: int = DEFAULT_MAX_TOKENS, token_param: str = "max_tokens") -> None:
+        self.model = label
+        self._url = base_url.rstrip("/") + "/chat/completions"
+        self._key = api_key
+        self._api_model = model
+        self._max_tokens = max_tokens
+        self._token_param = token_param
+
+    def complete(self, system: str, user: str) -> tuple[str, Optional[int], Optional[int]]:
+        import urllib.request
+
+        body = {
+            "model": self._api_model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            self._token_param: self._max_tokens,
+        }
+        headers = {"Content-Type": "application/json"}
+        if self._key:
+            headers["Authorization"] = f"Bearer {self._key}"
+        req = urllib.request.Request(self._url, data=json.dumps(body).encode(), headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT_SECONDS) as resp:
+            data = json.load(resp)
+        text = data["choices"][0]["message"].get("content") or ""
+        usage = data.get("usage") or {}
+        return text, usage.get("prompt_tokens"), usage.get("completion_tokens")
+
+
+def build_client(spec: str) -> Optional[LlmClient]:
+    """Client for a "provider:model" spec, or None when its credentials are missing."""
+    provider, _, model = spec.partition(":")
+    if not model:  # a bare model name means anthropic
+        provider, model = "anthropic", spec
+    max_tokens = int(os.environ.get("LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS))
+    if provider == "anthropic":
+        key = os.environ.get("ANTHROPIC_API_KEY")
+        return AnthropicClient(key, model, max_tokens) if key else _missing("ANTHROPIC_API_KEY", spec)
+    if provider == "openai":
+        key = os.environ.get("OPENAI_API_KEY")
+        if not key:
+            return _missing("OPENAI_API_KEY", spec)
+        # Reasoning models take max_completion_tokens rather than max_tokens.
+        return OpenAICompatClient(spec, "https://api.openai.com/v1", key, model, max_tokens, "max_completion_tokens")
+    if provider == "compat":
+        base = os.environ.get("LLM_COMPAT_BASE_URL")
+        if not base:
+            return _missing("LLM_COMPAT_BASE_URL", spec)
+        return OpenAICompatClient(spec, base, os.environ.get("LLM_COMPAT_API_KEY"), model, max_tokens,
+                                  os.environ.get("LLM_COMPAT_TOKEN_PARAM", "max_tokens"))
+    logger.warning("unknown LLM provider in %r", spec)
+    return None
+
+
+def _missing(var: str, spec: str) -> None:
+    logger.warning("%s is not set, so %s is unavailable", var, spec)
+    return None
+
+
 def get_client(role: str = "root-cause") -> Optional[LlmClient]:
-    """None unless explicitly enabled; the key comes from the environment only."""
+    """None unless explicitly enabled; keys and endpoints come from the environment only."""
     if os.environ.get("LLM_AGENT_ENABLED") != "1":
         return None
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        logger.warning("LLM_AGENT_ENABLED=1 but ANTHROPIC_API_KEY is not set")
-        return None
-    max_tokens = int(os.environ.get("LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS))
-    return AnthropicClient(key, model_for(role), max_tokens)
+    return build_client(model_for(role))
 
 
 def build_facts(db: Session, equipment_id: int, now: datetime) -> dict:
