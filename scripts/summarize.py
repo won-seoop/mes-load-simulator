@@ -27,7 +27,11 @@ def load_locust_stats(raw_dir: Path) -> dict:
         "p99_ms": float(total["99%"]),
         "avg_ms": float(total["Average Response Time"]),
         "business_conflicts": business_conflicts,
-        "server_5xx": len(re.findall(r'HTTP/1\.1 5\d\d ', server_log_text)),
+        # uvicorn's access log quotes the request line before the status code
+        # (`"POST /x HTTP/1.1" 500 ...`), not `HTTP/1.1 500` with no quote —
+        # the old pattern never matched a real line and silently reported 0
+        # on every run, including ones with actual 500s in the log below.
+        "server_5xx": len(re.findall(r'HTTP/1\.1"\s+5\d\d ', server_log_text)),
         "integrity_errors": server_log_text.count("IntegrityError"),
     }
 
