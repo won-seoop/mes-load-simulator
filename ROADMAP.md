@@ -348,16 +348,50 @@
       리포트의 승인 큐 지표는 관측되지 않는다. 한계: 이 지표들은 아직 대시보드에만 있고
       `agent_gateway`나 일일 리포트(`summarize.py`)에는 아직 노출하지 않았다 — 승인 큐가 비어
       있는 날이 많아 일일 리포트에 넣어도 대부분 `None`으로 찍힐 것이라 판단해 보류했다.
+- [x] (2026-09-28) 승인 큐 밖(설비 상태 수동 PATCH, 작업지시 Release)까지 포함하는 통합
+      Audit Trail 추가. 기존 `ApprovalRequest`는 결정 하나(누가/언제/무엇을/왜)만 자기 행에
+      담아 승인 큐 안에서는 이력이 남았지만, `PATCH /equipment/{id}/status`나
+      `POST /work-orders/{id}/release`처럼 승인 큐를 거치지 않는 상태 변경은 감사 로그가
+      전혀 없었다(2026-09-25 HITL 진행 현황 페이지가 "한계"로 남겨둔 항목). 범용 `AuditLog`
+      테이블(`app/audit.py`)을 추가해 설비 상태 PATCH·작업지시 Release·승인 결정 3곳 모두
+      같은 트랜잭션(같은 `db.commit()`)으로 기록하도록 했다 — 감사 로그 `add()`와 실제 상태
+      변경이 항상 같이 커밋되거나 같이 롤백되어 서로 불일치할 수 없다. 승인 결정 경로는
+      기존에 "조건부 UPDATE 성공 후 즉시 commit"하던 것을 "조건부 UPDATE 성공 확인 → 감사
+      로그 add → 같이 commit"으로 재구성했다. `GET /audit-log`(entity_type/entity_id 필터)
+      API와 `agent_gateway`의 `get_audit_log` 읽기 도구를 추가했다. 검증:
+      `tests/test_audit_log.py` 6건 신규(설비 상태 변경 기록, 같은 상태로 PATCH하면 기록 안
+      함, 작업지시 Release 기록, 승인 결정 기록·actor 반영, 이미 결정된 요청 재결정 시도
+      (409)는 기록 안 함, 여러 entity_type이 한 Feed에서 최신순 정렬) 전체 통과. 50 VU/3분
+      파이프라인 재확인.
+- [x] (2026-09-28) 일일 리포트의 `Server 5xx` 카운트가 항상 0으로 찍히던 버그 발견·수정
+      (PAR-014). Audit Trail 검증용 50 VU/3분 파이프라인 실행 중 `server.log`에 SQLite
+      `database is locked`로 인한 실제 500이 2건 있었는데도 생성된 리포트는 "Server 5xx: 0"
+      이었다. 원인은 `scripts/summarize.py`의 `server_5xx` 정규식(`HTTP/1\.1 5\d\d `)이
+      uvicorn이 실제로 남기는, 요청 라인을 큰따옴표로 감싸는 형식(`"...HTTP/1.1" 500 ...`)과
+      달라 한 번도 매치되지 않았던 것 — 과거 리포트들에 반복해서 적힌 "Server 5xx: 0"도 이
+      버그 때문이었을 가능성이 높다(진짜 0이었는지는 이제 검증할 수 없다). 정규식을
+      `HTTP/1\.1"\s+5\d\d `로 수정하고 오늘 캡처된 실제 로그로 수정 전(0건)/후(2건)를 직접
+      대조해 검증했다. `tests/test_summarize.py` 3건 신규(uvicorn 실제 포맷에서 5xx 카운트,
+      5xx 없을 때 0, 4xx는 세지 않음). `python scripts/summarize.py 2026-09-28`을 재실행해
+      `reports/2026-09-28.md`/`.json`의 Server 5xx를 0→2로 정정했다. pytest 179 -> 182개
+      전체 통과(Audit Trail 6건 + 이 항목 3건). 이 500 2건의 근본 원인(SQLite 동시 Write
+      Lock)은 오늘 범위 밖이라 아래 "다음 후보"에 별도로 남긴다.
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
 - [ ] Gateway에 추가한 `get_approval_queue`/`get_control_tower_decisions`를 실제로 사용하는
       LLM 에이전트(또는 A2A Quality Investigation Agent)가 승인 큐 상태를 근거로 삼아 조사
       결과를 보강하는 예시를 만들어본다 (지금은 Tool만 있고 이를 소비하는 에이전트 로직은 없음)
-- [ ] 승인 큐 Audit Trail: 지금은 `ApprovalRequest` 한 행이 결정 하나만 담아서(`decided_by`,
-      `decided_at`, `decision_reason`) "누가 언제 무엇을 왜 바꿨는지"의 이력 자체는 남지만 별도
-      Audit 테이블로 분리되어 있지 않다 — 승인 큐 밖의 변경(예: 설비 상태 수동 PATCH, 작업지시
-      Release)까지 포함하는 통합 Audit Trail을 추가할지 검토
+- [ ] (2026-09-28 완료) ~~승인 큐 Audit Trail~~ → `app/audit.py` + `GET /audit-log`로 구현
+      완료. 다음 단계는 대시보드에 감사 로그를 보여줄 화면(현재는 API만 있고 UI 없음) 추가
+- [ ] SQLite 동시 Write Lock 재현·원인 분석 (2026-09-28 PAR-014에서 50 VU/3분 부하 중
+      `database is locked`로 인한 실제 500 2건을 처음으로 실측 확인했다 — 기존
+      "SQLite -> Postgres 전환" 후보와 연결되는 구체적인 재현 사례이므로, 어느 쿼리/트랜잭션
+      조합이 락을 유발하는지 로그로 특정하고 WAL 모드·재시도 등 대안을 비교해볼 가치가 있음)
+- [ ] `scripts/summarize.py`의 다른 정규식/파서(예: `integrity_errors`의 단순 부분 문자열
+      매칭)도 실제 캡처된 `server.log`로 한 번씩 대조해 `server_5xx`와 같은 "실제 로그
+      포맷과 안 맞아 조용히 0만 찍히는" 문제가 더 있는지 감사 (2026-09-28 PAR-014 재발 방지
+      연장)
 - [ ] 오늘 추가한 승인 큐 지표(승인율/수정율/대기시간/너무 빠른 승인 비율)를 시뮬레이션 엔진이
       자동으로 승인 요청을 만들도록 데모 시나리오를 하루 이상 돌려 실제 0이 아닌 값으로 채워보고,
       `fast_approval_rate` 임계값(5초)이 데모 시나리오에서 그럴듯한 값을 만드는지 확인
