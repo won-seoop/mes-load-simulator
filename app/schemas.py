@@ -315,6 +315,22 @@ class ControlTowerDecisionOut(BaseModel):
         from_attributes = True
 
 
+class AuditLogOut(BaseModel):
+    id: int
+    occurred_at: datetime
+    actor: str
+    action: str
+    entity_type: str
+    entity_id: Optional[int]
+    summary: str
+    before_value: Optional[str]
+    after_value: Optional[str]
+    reason: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
 class DefectBiasInject(BaseModel):
     equipment_id: int
     defect_rate: float = Field(gt=0, le=1)

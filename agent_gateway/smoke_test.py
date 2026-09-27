@@ -22,6 +22,7 @@ async def main() -> None:
             "get_approval_queue",
             "get_approval_summary",
             "get_control_tower_decisions",
+            "get_audit_log",
         }
 
         resources = await client.list_resources()
@@ -50,6 +51,9 @@ async def main() -> None:
 
         decisions_result = await client.call_tool("get_control_tower_decisions", {})
         assert not decisions_result.is_error
+
+        audit_result = await client.call_tool("get_audit_log", {})
+        assert not audit_result.is_error
 
         print(
             {

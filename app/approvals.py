@@ -10,6 +10,7 @@ from typing import Optional
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
+from app import audit as audit_service
 from app.models import ApprovalRequest, ApprovalRisk, ApprovalStatus
 
 RISK_ORDER = {
@@ -135,7 +136,8 @@ def decide(
         raise ApprovalInvalid("edited_proposal is only valid with approve")
 
     now = now or datetime.utcnow()
-    if db.get(ApprovalRequest, approval_id) is None:
+    existing = db.get(ApprovalRequest, approval_id)
+    if existing is None:
         raise ApprovalNotFound(approval_id)
 
     new_status = (
@@ -157,9 +159,24 @@ def decide(
             edited_proposal=edited_proposal,
         )
     )
-    db.commit()
     if not result.rowcount:
+        db.rollback()
         raise ApprovalConflict(approval_id)
+    # Same transaction as the status UPDATE above: the audit row and the
+    # decision it documents commit together or not at all.
+    audit_service.record(
+        db,
+        actor=decided_by,
+        action="approval.decided",
+        entity_type="approval_request",
+        entity_id=approval_id,
+        summary=f"{action} approval #{approval_id}: {existing.title}",
+        before=ApprovalStatus.PENDING.value,
+        after=new_status,
+        reason=reason,
+        now=now,
+    )
+    db.commit()
     row = db.get(ApprovalRequest, approval_id)
     db.refresh(row)
     return row

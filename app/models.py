@@ -305,3 +305,30 @@ class LlmAgentRun(Base):
     hypothesis = Column(Text, nullable=True)
     recommended_action = Column(String, nullable=True)
     detail = Column(String, nullable=True)  # why it was rejected, or the error
+
+
+class AuditLog(Base):
+    """Who/when/what/why for a significant state change, independent of which
+    endpoint made it.
+
+    ApprovalRequest already records a decision's who/when/why on its own row,
+    but that only covers actions that went through the approval queue.
+    Equipment status PATCH and work order release change production state
+    without ever touching that table, so there was no single place to answer
+    "who changed what, and why" across both paths. Every writer here also
+    commits it in the same transaction as the state change it describes, so
+    the two can never disagree about whether something happened.
+    """
+
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    actor = Column(String, nullable=False)
+    action = Column(String, nullable=False, index=True)
+    entity_type = Column(String, nullable=False, index=True)
+    entity_id = Column(Integer, nullable=True, index=True)
+    summary = Column(String, nullable=False)
+    before_value = Column(String, nullable=True)
+    after_value = Column(String, nullable=True)
+    reason = Column(String, nullable=True)

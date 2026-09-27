@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 from statistics import mean, pstdev
+from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
@@ -9,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import approvals as approvals_service
+from app import audit as audit_service
 from app.database import Base, SessionLocal, engine, get_db
 from app.models import (
     PROCESS_ROUTE,
@@ -36,6 +38,7 @@ from app.schemas import (
     ApprovalDecision,
     ApprovalOut,
     ApprovalSummaryOut,
+    AuditLogOut,
     ControlTowerDecisionOut,
     DefectBiasInject,
     EquipmentDowntimeEventOut,
@@ -477,6 +480,17 @@ def release_work_order(work_order_id: int, db: Session = Depends(get_db)):
         if not work_order:
             raise HTTPException(404, "work order not found")
         raise HTTPException(409, f"work order is {work_order.status}, cannot release")
+    audit_service.record(
+        db,
+        actor="api",
+        action="work_order.released",
+        entity_type="work_order",
+        entity_id=work_order_id,
+        summary=f"work order {work_order_id} released",
+        before=WorkOrderStatus.CREATED.value,
+        after=WorkOrderStatus.RELEASED.value,
+        now=now,
+    )
     db.commit()
     return db.get(WorkOrder, work_order_id)
 
@@ -650,8 +664,22 @@ def set_equipment_status(
             open_event.ended_at = now
             open_event.duration_seconds = (now - open_event.started_at).total_seconds()
 
+    previous_status = eq.status
     eq.status = body.status
     eq.last_status_change = now
+    if previous_status != body.status:
+        audit_service.record(
+            db,
+            actor="api",
+            action="equipment.status_changed",
+            entity_type="equipment",
+            entity_id=eq.id,
+            summary=f"{eq.name} {previous_status.value} -> {body.status.value}",
+            before=previous_status.value,
+            after=body.status.value,
+            reason=body.reason,
+            now=now,
+        )
     db.commit()
     db.refresh(eq)
     return eq
@@ -1356,6 +1384,21 @@ def list_control_tower_decisions(db: Session = Depends(get_db)):
         .order_by(ControlTowerDecision.decided_at.desc(), ControlTowerDecision.id.desc())
         .limit(100)
         .all()
+    )
+
+
+@app.get("/audit-log", response_model=list[AuditLogOut])
+def list_audit_log(
+    entity_type: Optional[str] = None,
+    entity_id: Optional[int] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+):
+    """Who/when/what/why for state changes made outside the approval queue's
+    own decision record (equipment status PATCH, work order release) and for
+    approval decisions themselves, in one feed."""
+    return audit_service.list_recent(
+        db, entity_type=entity_type, entity_id=entity_id, limit=min(limit, 500)
     )
 
 

@@ -120,5 +120,20 @@ def get_control_tower_decisions() -> list[dict]:
     return _get("/control-tower/decisions")
 
 
+@mcp.tool()
+def get_audit_log(entity_type: str | None = None, entity_id: int | None = None) -> list[dict]:
+    """Who/when/what/why for state changes: equipment status PATCH, work order
+    release and approval decisions, most recent first. Optionally filter by
+    entity_type ("equipment", "work_order" or "approval_request") and/or
+    entity_id."""
+    query = []
+    if entity_type:
+        query.append(f"entity_type={quote(entity_type)}")
+    if entity_id is not None:
+        query.append(f"entity_id={int(entity_id)}")
+    path = "/audit-log" + (f"?{'&'.join(query)}" if query else "")
+    return _get(path)
+
+
 if __name__ == "__main__":
     mcp.run()

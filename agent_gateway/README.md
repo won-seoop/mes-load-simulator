@@ -17,6 +17,8 @@ MCP는 Agent 간 작업 위임 프로토콜이 아니라, Host가 MES 데이터�
 - Tool `get_approval_queue`: Human-in-the-Loop 승인 큐 조회(status로 PENDING/APPROVED/REJECTED/EXPIRED 필터)
 - Tool `get_approval_summary`: 승인 큐 상태별·위험도별 집계
 - Tool `get_control_tower_decisions`: 컨트롤타워의 BLOCK/AUTO_RECORD/QUEUE 판정 이력(병합 근거 포함)
+- Tool `get_audit_log`: 설비 상태 PATCH·작업지시 Release·승인 결정의 누가/언제/무엇을/왜 통합 이력
+  (entity_type/entity_id로 필터)
 
 현재 단계는 의도적으로 read-only다. 작업지시 Release, 설비 상태 변경, Scrap/Rework 같은 생산 Command를
 LLM이 직접 실행하지 않는다.
