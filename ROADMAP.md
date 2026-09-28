@@ -377,8 +377,59 @@
       전체 통과(Audit Trail 6건 + 이 항목 3건). 이 500 2건의 근본 원인(SQLite 동시 Write
       Lock)은 오늘 범위 밖이라 아래 "다음 후보"에 별도로 남긴다.
 
+- [x] (2026-09-29) HITL 트랙 "규칙 기반 에이전트(Baseline)" 단계에 3번째 에이전트
+      `rule:production-hold`(`app/production_agent.py`)를 추가했다. Notion HITL 허브
+      페이지의 "지금 어디까지 왔나" 표를 다시 확인하다가, 이미 구현된 `equipment_agent`/
+      `llm_agent`(둘 다 2026-09-25~26에 커밋됨)가 반영되지 않은 채 여전히 "품질 에이전트
+      1개만 구현"으로 남아 있는 것도 함께 발견해 Notion 쪽을 정정했다(아래 "E. 문제·해결
+      로그" 기록 참고). 정작 진짜로 비어 있던 것은 "생산" 에이전트였다 — 코드를 읽다가
+      기존 두 규칙(`equipment_agent.propose_from_downtime`: 설비 1대가 10분 내 3회 이상
+      DOWN, `propose_from_concurrent_downs`: 서로 다른 설비 5대 이상이 40초 내 동시 DOWN)의
+      임계값 사이에 실제 탐지 공백이 있음을 확인했다: 같은 공정 스텝의 설비 정확히 3대가
+      거의 동시에(각자 1회씩만) DOWN되면 그 스텝은 완전히 정지(로트 전원 HOLD)하지만, 3 <
+      5(동시 다운 임계값)라 `propose_from_concurrent_downs`가 잡지 못하고, 설비별 DOWN
+      횟수도 각각 1회뿐이라 `propose_from_downtime`의 3회 임계값도 넘지 못한다 — 즉 "가장
+      심각한 상태(공정 전체 정지)"가 오히려 두 기존 규칙 모두의 사각지대에 있었다. 대안
+      A(기존 `propose_from_downtime`에 DOWN *횟수* 대신 *누적 시간* 가중치를 추가하거나
+      `propose_from_concurrent_downs`의 임계값을 3으로 낮추는 방법)는 검토했지만 채택하지
+      않았다 — 임계값을 3으로 낮추면 서로 무관한 다른 스텝의 설비들이 우연히 40초 내에
+      겹쳐 DOWN되는 정상적인 노이즈도 오탐으로 잡히고(공정 스텝 정보를 아예 안 보는
+      규칙이라 상관관계를 구분 못함), 어느 쪽이든 "설비가 몇 번/얼마나 DOWN됐는가"라는
+      설비 건강 신호와 "실제로 생산이 얼마나 오래 멈췄는가"라는 생산 영향 신호를 한 규칙에
+      섞어 두 신호 모두 불분명해진다. 대신 B: 이미 `/metrics`의 팩토리 전체
+      HOLD 대기시간 계산(`_equipment_hold_wait_metrics`, 2026-09-21)이 쓰던 것과 같은
+      `LOT_HELD`/`LOT_RELEASED_FROM_HOLD` 이벤트 저널을 공정 스텝별로 재구성해, "이 스텝에서
+      가장 오래 걸린 로트가 지금 몇 초째 대기 중인가"를 직접 측정하는 새 에이전트를
+      추가했다 — DOWN 이벤트 개수의 대리 지표가 아니라 실제 생산 정체 시간을 직접 보므로
+      기존 두 규칙과 겹치지 않는다. 위험도 3단계(LOW ≥30초/MEDIUM ≥90초/HIGH ≥240초,
+      시뮬레이션 엔진의 단일 설비 최대 DOWN 시간(30초, `SimulationConfig.equipment_down_max_seconds`)을
+      기준으로 잡은 데모 값, 실제 표준 근거 아님)이며 action_kind는 기존에 이미 허용된
+      `INSPECT_EQUIPMENT`를 재사용해 `control_tower.py` 스키마 변경이 필요 없었다.
+      검증: 유닛테스트 9개(`tests/test_production_agent.py` — 무이상 시 빈 목록, 임계값
+      바로 아래/LOW/HIGH 경계, HOLD 해소 시 카운트 중단, 같은 스텝 2개 로트 시 evidence
+      건수만 증가, 서로 다른 두 스텝이 각각 별도 제안 생성, 컨트롤타워가 MEDIUM+는 QUEUE·
+      LOW는 AUTO_RECORD로 분기)와 `tests/test_control_tower.py`에 통합 테스트 1개(시뮬레이션
+      엔진의 `_maybe_check_anomalies`를 직접 거쳐 `rule:production-hold`가 다른 에이전트와
+      섞이지 않고 별도 승인 요청으로 도착하는지) 추가 — pytest 182 -> 192개 전체 통과.
+      살아있는 서버(전용 스모크용 DB)에 실제로 ETCH 설비 3대를 curl로 모두 DOWN시켜 로트를
+      HOLD시킨 뒤, 그 진짜 `LOT_HELD` 이벤트 시각을 읽어 MEDIUM 임계값(90초) 시점의
+      `now`로 `propose_from_step_hold_wait`를 직접 호출해 제안이 만들어지는 것과, 그 결과가
+      `ct.process`를 거쳐 실제 `GET /approvals`·`GET /control-tower/decisions` 응답에 정확히
+      나타나는 것까지 확인했다. 50 VU/3분 파이프라인도 재확인(실패율 0%, RPS 88.42,
+      p95 150ms/p99 360ms, Server 5xx/IntegrityError 0) — 이번 Locust 시나리오에서는
+      관측된 최대 HOLD 대기가 10.1초로 새 에이전트의 최저 임계값(30초)에 못 미쳐 실제로는
+      발동하지 않았다(지어낸 결과를 적지 않기 위해 그대로 기록 — 이 시나리오는 스텝 전체
+      다운 후 빠른 복구를 재현하도록 튜닝돼 있어 30초 이상 정체가 드물다). 대시보드는
+      `equipment_id: null` 제안(예: 기존 "공장 전체" 동시다운 제안)을 이미 지원하고 있어
+      화면 쪽 변경은 필요 없었다.
+
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
+- [ ] `rule:production-hold`가 실제 Locust/시뮬레이션 시나리오에서 최소 한 번 이상 발동하는
+      것을 관측하려면(오늘은 30초 임계값을 넘는 HOLD가 없어 발동하지 못했다) 스텝 전체
+      다운 후 복구까지 걸리는 시간을 일부러 늘린 별도 데모 시나리오가 필요하다(기존
+      `fault_inject_step_down`은 `MIN_DOWN_DWELL_SECONDS=5`초만 지나면 개별 설비가 각자
+      복구되므로 3대가 동시에 30초 이상 함께 묶여 있는 경우가 드물다)
 - [ ] Gateway에 추가한 `get_approval_queue`/`get_control_tower_decisions`를 실제로 사용하는
       LLM 에이전트(또는 A2A Quality Investigation Agent)가 승인 큐 상태를 근거로 삼아 조사
       결과를 보강하는 예시를 만들어본다 (지금은 Tool만 있고 이를 소비하는 에이전트 로직은 없음)

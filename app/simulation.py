@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger("app.simulation")
 
-from app import control_tower, equipment_agent, llm_agent
+from app import control_tower, equipment_agent, llm_agent, production_agent
 from app.database import SessionLocal
 from app.models import (
     AnomalyLog,
@@ -314,6 +314,7 @@ class SimulationEngine:
         proposals = [p for a in anomalies if (p := self._quality_proposal(a)) is not None]
         proposals += equipment_agent.propose_from_downtime(db, now)
         proposals += equipment_agent.propose_from_concurrent_downs(db, now)
+        proposals += production_agent.propose_from_step_hold_wait(db, now)
         try:
             proposals += llm_agent.propose(db, llm_agent.get_client("root-cause"), proposals, now)
         except Exception as exc:  # the rule-based baseline must survive any LLM-side failure

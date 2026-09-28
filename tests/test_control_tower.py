@@ -7,7 +7,9 @@ from app import control_tower as ct
 from app import equipment_agent
 from app.database import SessionLocal
 from app.models import ApprovalRequest, ControlTowerDecision, EquipmentDowntimeEvent
+from app import production_agent
 from app.simulation import SimulationEngine
+from tests.test_production_agent import _hold_lot_at_step
 from tests.test_simulation import _freeze_main_time, _seed_inspect03_anomaly
 
 T0 = datetime(2026, 1, 1, 12, 0, 0)
@@ -248,6 +250,22 @@ def test_simulation_merges_quality_and_equipment_agents_into_one_request(client,
     decision = db.query(ControlTowerDecision).one()
     assert decision.disposition == ct.QUEUE
     assert decision.contributing_agents == "rule:quality-anomaly,rule:equipment-downtime"
+
+
+def test_simulation_picks_up_a_step_wide_hold_as_its_own_request(client, db, monkeypatch):
+    """rule:production-hold has a different dedupe_key (per step, not per
+    equipment) from rule:equipment-downtime, so a step-wide HOLD must land as
+    a separate approval request rather than silently merging or being lost."""
+    _, step, _ = _hold_lot_at_step(client, monkeypatch, T0)
+    checked_at = T0 + timedelta(seconds=production_agent.HOLD_RISK_TIERS[1][0])
+
+    _check(SimulationEngine(), monkeypatch, checked_at)
+
+    rows = db.query(ApprovalRequest).all()
+    assert len(rows) == 1
+    assert rows[0].source_agent == "rule:production-hold"
+    assert rows[0].equipment_id is None
+    assert step in rows[0].title
 
 
 def test_watch_anomaly_still_creates_no_approval_request(client, db, monkeypatch):
