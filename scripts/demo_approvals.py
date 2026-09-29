@@ -1,6 +1,6 @@
 """Trigger the demo scenarios that put requests into the approval queue.
 
-    python scripts/demo_approvals.py s1|s2|s3 [--base http://127.0.0.1:8000]
+    python scripts/demo_approvals.py s1|s2|s3|s4 [--base http://127.0.0.1:8000]
 
 The simulation must be running (POST /simulation/start); the agents check every
 30 seconds, so a request shows up within about a minute (S2 needs ~10 inspections
@@ -56,9 +56,34 @@ def s3(base):
     print("S3: DOWN then IDLE injected on " + ", ".join(e["name"] for e in tools))
 
 
+def s4(base, step="ETCH", hold_seconds=100):
+    """All tools on one process step stay DOWN long enough for the step-wide HOLD
+    wait to cross rule:production-hold's MEDIUM tier (>=90s) -> QUEUE request
+    (INSPECT_EQUIPMENT). Needs the simulation running so lots are actually queued
+    at `step` and get HOLD'd once every tool on it is down (see app/production_agent.py).
+    Unlike s1/s3, this scenario deliberately keeps the tools down (does not recover
+    them immediately) — ROADMAP's "다음 후보" noted rule:production-hold had never
+    been observed firing in a real run because every prior fault-injection scenario
+    recovers each tool within a few seconds, well under its 30s lowest threshold."""
+    tools = [e for e in equipment(base) if e["process_step"] == step]
+    for eq in tools:
+        call(base, "PATCH", f"/equipment/{eq['id']}/status", {"status": "DOWN", "reason": "FAULT_INJECTION"})
+    print(f"S4: {step} tools DOWN ({', '.join(e['name'] for e in tools)}), "
+          f"holding {hold_seconds:.0f}s so wait crosses the MEDIUM tier (90s)...")
+    time.sleep(hold_seconds)
+    for eq in tools:
+        call(base, "PATCH", f"/equipment/{eq['id']}/status", {"status": "IDLE", "reason": "FAULT_INJECTION"})
+    print(f"S4: {step} tools restored. Check GET /approvals for a rule:production-hold request.")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("scenario", choices=["s1", "s2", "s3"])
+    ap.add_argument("scenario", choices=["s1", "s2", "s3", "s4"])
     ap.add_argument("--base", default="http://127.0.0.1:8000")
+    ap.add_argument("--step", default="ETCH", help="s4 only: process step to hold down")
+    ap.add_argument("--hold-seconds", type=float, default=100.0, help="s4 only: DOWN duration")
     a = ap.parse_args()
-    {"s1": s1, "s2": s2, "s3": s3}[a.scenario](a.base)
+    if a.scenario == "s4":
+        s4(a.base, step=a.step, hold_seconds=a.hold_seconds)
+    else:
+        {"s1": s1, "s2": s2, "s3": s3}[a.scenario](a.base)
