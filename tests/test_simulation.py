@@ -216,6 +216,53 @@ def test_equipment_trips_down_and_recovers_on_schedule(client, monkeypatch):
         db.close()
 
 
+def test_fault_rate_override_suppresses_random_downs_until_it_expires(monkeypatch):
+    """scripts/demo_approvals.py s4 --isolate relies on rate=0 fully suppressing
+    the engine's own random equipment-down faults during a demo window, and on
+    that suppression clearing itself once the override expires."""
+    engine = SimulationEngine()
+    engine._config = SimulationConfig(
+        equipment_down_probability_per_tick=1.0,  # would always trip without the override
+        equipment_down_min_seconds=5,
+        equipment_down_max_seconds=5,
+    )
+    t0 = datetime(2026, 1, 1, 0, 0, 0)
+    _freeze_main_time(monkeypatch, t0)
+    engine._next_lot_arrival_at = t0 + timedelta(days=1)  # no lot arrivals in this test
+
+    assert engine._fault_probability() == 1.0
+    engine.inject_fault_rate_override(0.0, duration_seconds=3600)
+    assert engine._fault_probability() == 0.0
+    engine._tick_once(now=t0)
+
+    db = SessionLocal()
+    try:
+        assert db.query(Equipment).filter(Equipment.status == EquipmentStatus.DOWN).count() == 0
+    finally:
+        db.close()
+
+    engine.clear_fault_rate_override()
+    assert engine._fault_probability() == 1.0
+    engine._tick_once(now=t0 + timedelta(seconds=1))
+
+    db = SessionLocal()
+    try:
+        total_equipment = db.query(Equipment).count()
+        assert db.query(Equipment).filter(Equipment.status == EquipmentStatus.DOWN).count() == total_equipment
+    finally:
+        db.close()
+
+
+def test_status_reports_fault_rate_override_while_active():
+    engine = SimulationEngine()
+    assert engine.status()["fault_rate_override"] is None
+    engine.inject_fault_rate_override(0.0, duration_seconds=60)
+    override = engine.status()["fault_rate_override"]
+    assert override["rate"] == 0.0
+    engine.clear_fault_rate_override()
+    assert engine.status()["fault_rate_override"] is None
+
+
 def test_broken_lot_does_not_block_other_due_lots_in_same_tick(client, monkeypatch):
     """Regression test for a production incident: a lot HELD at the last
     process step used to raise an uncaught ValueError (HOLD -> QUALITY_HOLD

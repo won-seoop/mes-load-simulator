@@ -56,7 +56,7 @@ def s3(base):
     print("S3: DOWN then IDLE injected on " + ", ".join(e["name"] for e in tools))
 
 
-def s4(base, step="ETCH", hold_seconds=100):
+def s4(base, step="ETCH", hold_seconds=100, isolate=False):
     """All tools on one process step stay DOWN long enough for the step-wide HOLD
     wait to cross rule:production-hold's MEDIUM tier (>=90s) -> QUEUE request
     (INSPECT_EQUIPMENT). Needs the simulation running so lots are actually queued
@@ -64,7 +64,29 @@ def s4(base, step="ETCH", hold_seconds=100):
     Unlike s1/s3, this scenario deliberately keeps the tools down (does not recover
     them immediately) — ROADMAP's "다음 후보" noted rule:production-hold had never
     been observed firing in a real run because every prior fault-injection scenario
-    recovers each tool within a few seconds, well under its 30s lowest threshold."""
+    recovers each tool within a few seconds, well under its 30s lowest threshold.
+
+    --isolate suppresses the engine's own background random equipment-down
+    faults (via POST /simulation/inject/fault-rate, rate=0) for the duration of
+    this scenario, so no *new* random DOWN starts once isolation is active.
+    Without it (the default), the run stays realistic — a real factory does
+    not pause unrelated random failures just because one step is down — but
+    an unrelated rule (e.g. rule:equipment-downtime's factory-wide
+    concurrent-down check) can coincidentally fire in the same window if the
+    RNG happens to down other tools too (observed 2026-09-30, PAR-016); that
+    is not a bug, just a second signal in the same demo run.
+    Caveat measured 2026-10-01: isolation only blocks *new* random downs from
+    the moment this call injects the override — a random DOWN that started in
+    the seconds just before this call is unaffected and can still fall inside
+    rule:equipment-downtime's 40s concurrent-down window together with this
+    scenario's own DOWN calls, producing that same second proposal anyway. To
+    fully isolate the signal, inject the override (or call this with
+    --isolate) at least ~40s before starting the scenario, not only for its
+    duration."""
+    if isolate:
+        out = call(base, "POST", "/simulation/inject/fault-rate",
+                   {"rate": 0, "duration_seconds": hold_seconds + 30})
+        print(f"S4: background random faults suppressed until {out['expires_at']}")
     tools = [e for e in equipment(base) if e["process_step"] == step]
     for eq in tools:
         call(base, "PATCH", f"/equipment/{eq['id']}/status", {"status": "DOWN", "reason": "FAULT_INJECTION"})
@@ -73,6 +95,9 @@ def s4(base, step="ETCH", hold_seconds=100):
     time.sleep(hold_seconds)
     for eq in tools:
         call(base, "PATCH", f"/equipment/{eq['id']}/status", {"status": "IDLE", "reason": "FAULT_INJECTION"})
+    if isolate:
+        call(base, "DELETE", "/simulation/inject/fault-rate")
+        print("S4: background random faults restored")
     print(f"S4: {step} tools restored. Check GET /approvals for a rule:production-hold request.")
 
 
@@ -82,8 +107,10 @@ if __name__ == "__main__":
     ap.add_argument("--base", default="http://127.0.0.1:8000")
     ap.add_argument("--step", default="ETCH", help="s4 only: process step to hold down")
     ap.add_argument("--hold-seconds", type=float, default=100.0, help="s4 only: DOWN duration")
+    ap.add_argument("--isolate", action="store_true",
+                     help="s4 only: suppress background random equipment faults during the run")
     a = ap.parse_args()
     if a.scenario == "s4":
-        s4(a.base, step=a.step, hold_seconds=a.hold_seconds)
+        s4(a.base, step=a.step, hold_seconds=a.hold_seconds, isolate=a.isolate)
     else:
         {"s1": s1, "s2": s2, "s3": s3}[a.scenario](a.base)

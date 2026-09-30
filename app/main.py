@@ -45,6 +45,7 @@ from app.schemas import (
     EquipmentOut,
     EquipmentQualityAnomalyOut,
     EquipmentStatusUpdate,
+    FaultRateInject,
     LotCreate,
     LotEventOut,
     LotOut,
@@ -1450,6 +1451,22 @@ def inject_defect_bias(body: DefectBiasInject, db: Session = Depends(get_db)):
 @app.delete("/simulation/inject/defect-bias")
 def clear_defect_bias():
     simulation_engine.clear_defect_bias()
+    return {"cleared": True}
+
+
+@app.post("/simulation/inject/fault-rate")
+def inject_fault_rate(body: FaultRateInject):
+    """Scenario injection (demo): temporarily replace the engine's random
+    equipment-down probability per tick (e.g. rate=0 to suppress background
+    random faults while a demo script drives one deliberate fault scenario,
+    so only that scenario's own rule fires in the observation window)."""
+    expires = simulation_engine.inject_fault_rate_override(body.rate, body.duration_seconds)
+    return {"rate": body.rate, "expires_at": expires}
+
+
+@app.delete("/simulation/inject/fault-rate")
+def clear_fault_rate():
+    simulation_engine.clear_fault_rate_override()
     return {"cleared": True}
 
 

@@ -337,6 +337,11 @@ class DefectBiasInject(BaseModel):
     duration_seconds: float = Field(default=300, gt=0, le=3600)
 
 
+class FaultRateInject(BaseModel):
+    rate: float = Field(ge=0, le=1)
+    duration_seconds: float = Field(default=300, gt=0, le=3600)
+
+
 class MetricsOut(BaseModel):
     wip_count: int
     completed_today: int

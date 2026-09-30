@@ -103,6 +103,10 @@ class SimulationEngine:
         self._next_anomaly_check_at: datetime | None = None
         # equipment_id -> (injected defect rate, expires_at); scenario injection only
         self._defect_bias: dict[int, tuple[float, datetime]] = {}
+        # (override probability, expires_at); scenario injection only, lets a demo
+        # suppress the engine's own random equipment-down noise so a single
+        # injected scenario is the only fault signal in the observation window
+        self._fault_rate_override: tuple[float, datetime] | None = None
         self._events: deque[str] = deque(maxlen=40)
         self._mes_main = None  # lazily imported to avoid a circular import
 
@@ -118,6 +122,12 @@ class SimulationEngine:
                 for eq_id, (rate, expires) in self._defect_bias.items()
                 if expires > datetime.utcnow()
             },
+            "fault_rate_override": (
+                {"rate": self._fault_rate_override[0], "expires_at": self._fault_rate_override[1]}
+                if self._fault_rate_override is not None
+                and self._fault_rate_override[1] > datetime.utcnow()
+                else None
+            ),
             "recent_events": list(self._events)[::-1],
         }
 
@@ -133,6 +143,29 @@ class SimulationEngine:
 
     def clear_defect_bias(self) -> None:
         self._defect_bias.clear()
+
+    def inject_fault_rate_override(self, rate: float, duration_seconds: float) -> datetime:
+        """Scenario injection: replace `equipment_down_probability_per_tick`
+        with `rate` until it expires. Used to isolate one deliberately
+        injected fault-injection scenario from the engine's own background
+        random faults during a demo observation window (rate=0 suppresses
+        random faults entirely; the injected scenario's own DOWN/IDLE calls
+        are unaffected since those bypass this probability check)."""
+        expires = datetime.utcnow() + timedelta(seconds=duration_seconds)
+        self._fault_rate_override = (rate, expires)
+        self._log(f"시나리오 주입: 무작위 설비고장 확률 {rate * 100:.1f}%로 재정의 ({duration_seconds:.0f}초)")
+        return expires
+
+    def clear_fault_rate_override(self) -> None:
+        self._fault_rate_override = None
+
+    def _fault_probability(self) -> float:
+        # Mirrors _defect_rate_for: injected-scenario expiry is real wall-clock
+        # time (this is a demo/HTTP-driven override, not simulated tick time),
+        # so it expires correctly regardless of what `now` a tick is passed.
+        if self._fault_rate_override is not None and self._fault_rate_override[1] > datetime.utcnow():
+            return self._fault_rate_override[0]
+        return self._config.equipment_down_probability_per_tick
 
     def _defect_rate_for(self, db: Session, lot_id: int) -> float:
         if not self._defect_bias:
@@ -213,7 +246,7 @@ class SimulationEngine:
     # -- equipment faults -----------------------------------------------
     def _maybe_trip_equipment(self, db: Session, now: datetime, mes_main) -> None:
         for eq in db.query(Equipment).filter(Equipment.status != EquipmentStatus.DOWN).all():
-            if random.random() >= self._config.equipment_down_probability_per_tick:
+            if random.random() >= self._fault_probability():
                 continue
             mes_main.set_equipment_status(
                 eq.id,

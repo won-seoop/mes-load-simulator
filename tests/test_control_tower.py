@@ -363,3 +363,25 @@ def test_defect_bias_raises_only_the_target_tools_failure_rate(client, db):
     finally:
         client.delete("/simulation/inject/defect-bias")
     assert live_engine._defect_rate_for(db, on_target) == base
+
+
+def test_fault_rate_injection_rejects_out_of_range_rate(client):
+    assert client.post("/simulation/inject/fault-rate", json={"rate": 1.5}).status_code == 422
+    assert client.post("/simulation/inject/fault-rate", json={"rate": -0.1}).status_code == 422
+
+
+def test_fault_rate_injection_overrides_and_clears(client):
+    from app.simulation import engine as live_engine
+
+    base = live_engine._config.equipment_down_probability_per_tick
+    assert live_engine._fault_probability() == base
+
+    r = client.post("/simulation/inject/fault-rate", json={"rate": 0, "duration_seconds": 60})
+    assert r.status_code == 200
+    try:
+        assert live_engine._fault_probability() == 0
+        assert client.get("/simulation/status").json()["fault_rate_override"]["rate"] == 0
+    finally:
+        client.delete("/simulation/inject/fault-rate")
+    assert live_engine._fault_probability() == base
+    assert client.get("/simulation/status").json()["fault_rate_override"] is None
