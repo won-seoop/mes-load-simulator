@@ -468,6 +468,26 @@
         <div class="table-wrap" id="anomaly-log-wrap"></div>
       </section>
 
+      <!-- ================= AUDIT LOG ================= -->
+      <section class="panel" data-panel="auditlog">
+        <div class="page-head">
+          <h2>감사 로그</h2>
+          <div class="page-desc">
+            설비 상태 변경(PATCH), 작업지시 Release, 승인 큐 결정까지 — 승인 큐 밖에서 일어난 상태
+            변경도 포함해 누가·언제·무엇을·왜 바꿨는지 한 곳에서 봅니다 (<code>GET /audit-log</code>).
+          </div>
+        </div>
+        <div class="toolbar">
+          <select id="audit-filter">
+            <option value="">전체 대상</option>
+            <option value="equipment">설비</option>
+            <option value="work_order">작업지시</option>
+            <option value="approval_request">승인 요청</option>
+          </select>
+        </div>
+        <div class="table-wrap" id="audit-log-wrap"></div>
+      </section>
+
       <!-- ================= APPROVAL QUEUE ================= -->
       <section class="panel" data-panel="approvals">
         <div class="page-head">
@@ -537,6 +557,7 @@ const ICONS = {
   simulation: `<svg ${SVG_ATTRS}><circle cx="12" cy="12" r="9.5"/><path d="M10 8.5l6 3.5-6 3.5v-7z"/></svg>`,
   approvals: `<svg ${SVG_ATTRS}><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h5"/><path d="M9 17l2 2 4-4"/></svg>`,
   anomalylog: `<svg ${SVG_ATTRS}><path d="M12 3l9 16H3l9-16z"/><path d="M12 10v4"/><circle cx="12" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg>`,
+  auditlog: `<svg ${SVG_ATTRS}><path d="M8 3h8l4 4v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8 11h8M8 15h8M8 7h4"/></svg>`,
 };
 const NAV_ITEMS = [
   { view: "overview", label: "대시보드", short: "대시보드" },
@@ -546,6 +567,7 @@ const NAV_ITEMS = [
   { view: "quality", label: "품질", short: "품질" },
   { view: "approvals", label: "승인 큐", short: "승인" },
   { view: "anomalylog", label: "이상 이력", short: "이상이력" },
+  { view: "auditlog", label: "감사 로그", short: "감사로그" },
   { view: "simulation", label: "시뮬레이션", short: "시뮬" },
 ];
 
@@ -602,6 +624,7 @@ const VIEW_TITLES = {
   quality: "품질",
   approvals: "승인 큐",
   anomalylog: "이상 이력",
+  auditlog: "감사 로그",
   simulation: "시뮬레이션",
 };
 
@@ -1020,6 +1043,33 @@ function renderAnomalyLog(rows) {
     </table>`;
 }
 
+/* ---------------- audit log (equipment PATCH / work order release / approval decisions) ---------------- */
+const AUDIT_ENTITY_LABEL = { equipment: "설비", work_order: "작업지시", approval_request: "승인 요청" };
+
+function renderAuditLog(rows) {
+  const filter = document.getElementById("audit-filter").value;
+  const filtered = filter ? rows.filter(r => r.entity_type === filter) : rows;
+  const thead = "<tr><th>시각</th><th>대상</th><th>동작</th><th>요약</th><th>이전 → 이후</th><th>사유</th><th>처리자</th></tr>";
+  const body = filtered.map(r => `
+    <tr>
+      <td>${parseUtc(r.occurred_at).toLocaleString("ko-KR")}</td>
+      <td>${escapeHtml(AUDIT_ENTITY_LABEL[r.entity_type] || r.entity_type)} ${r.entity_id != null ? "#" + r.entity_id : ""}</td>
+      <td>${escapeHtml(r.action)}</td>
+      <td>${escapeHtml(r.summary)}</td>
+      <td>${escapeHtml(r.before_value ?? "-")} → ${escapeHtml(r.after_value ?? "-")}</td>
+      <td>${escapeHtml(r.reason ?? "-")}</td>
+      <td>${escapeHtml(r.actor)}</td>
+    </tr>
+  `).join("");
+  document.getElementById("audit-log-wrap").innerHTML = `
+    <table>
+      <thead>${thead}</thead>
+      <tbody>${body || `<tr><td class="empty" colspan="7">기록된 변경 없음</td></tr>`}</tbody>
+    </table>`;
+}
+
+document.getElementById("audit-filter").addEventListener("change", () => tick());
+
 /* ---------------- approval queue (human-in-the-loop) ---------------- */
 function escapeHtml(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1194,7 +1244,7 @@ document.addEventListener("click", e => {
 /* ---------------- main poll loop ---------------- */
 async function tick() {
   try {
-    const [metrics, equipment, workOrders, lots, quality, anomalies, anomalyLog, sim, approvalRows, approvalSummary, decisions] = await Promise.all([
+    const [metrics, equipment, workOrders, lots, quality, anomalies, anomalyLog, sim, approvalRows, approvalSummary, decisions, auditLog] = await Promise.all([
       getJSON("/metrics"),
       getJSON("/equipment"),
       getJSON("/work-orders"),
@@ -1206,6 +1256,7 @@ async function tick() {
       getJSON("/approvals"),
       getJSON("/approvals/summary"),
       getJSON("/control-tower/decisions"),
+      getJSON("/audit-log"),
     ]);
     towerDecisions = decisions;
     renderCards(metrics, quality);
@@ -1218,6 +1269,7 @@ async function tick() {
     renderAnomalies(anomalies);
     renderAnomalyLog(anomalyLog);
     renderApprovals(approvalRows, approvalSummary);
+    renderAuditLog(auditLog);
     if (selectedLotId) await renderLotDrawer();
     if (selectedEquipmentId) await renderEquipmentDrawer();
     document.getElementById("conn-dot").title = "연결됨 · " + new Date().toLocaleTimeString("ko-KR");
