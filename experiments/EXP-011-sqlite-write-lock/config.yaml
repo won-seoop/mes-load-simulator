@@ -1,0 +1,13 @@
+experiment_id: EXP-011
+repro_script: scripts/repro_sqlite_lock.sh
+workload:
+  users: 50
+  spawn_rate_per_second: 5
+  duration: 6m
+  database: SQLite (isolated file per run, fresh port per run)
+runs:
+  baseline_1: {sqlite_config: "unmodified (sqlite3 driver defaults, rollback-journal mode)"}
+  wal_mode: {sqlite_config: "journal_mode=WAL, synchronous=NORMAL, busy_timeout=15000 -- REJECTED, see experiment.md"}
+  baseline_2_control_rerun: {sqlite_config: "unmodified -- re-run after wal_mode to rule out session-ordering noise"}
+  alternative_a_adopted: {sqlite_config: "connect_args={'timeout': 15} only, no journal mode change -- ADOPTED"}
+metric: p95/p99 latency and RPS under identical workload (the original 'database is locked' error could not be reproduced in any run, so error count could not be used as the comparison metric)

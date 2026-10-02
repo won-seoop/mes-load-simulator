@@ -3,8 +3,10 @@
 __pycache__/
 *.pyc
 *.db
+*.db-journal
 .pytest_cache/
 reports/raw/
+experiments/*/raw/
 **/bin/
 **/obj/
 .DS_Store
