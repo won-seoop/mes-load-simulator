@@ -6,7 +6,7 @@ import pytest
 from app import control_tower as ct
 from app import equipment_agent
 from app.database import SessionLocal
-from app.models import ApprovalRequest, ControlTowerDecision, EquipmentDowntimeEvent
+from app.models import ApprovalRequest, ControlTowerDecision, EquipmentDowntimeEvent, InvestigationTask
 from app import production_agent
 from app.simulation import SimulationEngine
 from tests.test_production_agent import _hold_lot_at_step
@@ -266,6 +266,23 @@ def test_simulation_picks_up_a_step_wide_hold_as_its_own_request(client, db, mon
     assert rows[0].source_agent == "rule:production-hold"
     assert rows[0].equipment_id is None
     assert step in rows[0].title
+
+
+def test_quality_anomaly_creates_an_investigation_task_cited_in_the_evidence(client, db, monkeypatch):
+    """A newly-logged quality anomaly must produce an A2A-style investigation
+    task (app/a2a.py) *before* the quality agent's proposal is built, so the
+    proposal's evidence can cite the task that backs it."""
+    _seed_inspect03_anomaly(client)
+
+    _check(SimulationEngine(), monkeypatch, T0)
+
+    tasks = db.query(InvestigationTask).all()
+    assert len(tasks) == 1
+    assert tasks[0].state == "completed"
+    assert tasks[0].anomaly_log_id is not None
+
+    row = db.query(ApprovalRequest).one()
+    assert f"A2A Task #{tasks[0].id}" in row.evidence
 
 
 def test_watch_anomaly_still_creates_no_approval_request(client, db, monkeypatch):

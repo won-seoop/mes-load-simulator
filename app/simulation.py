@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger("app.simulation")
 
-from app import control_tower, equipment_agent, llm_agent, production_agent
+from app import a2a, control_tower, equipment_agent, llm_agent, production_agent
 from app.database import SessionLocal
 from app.models import (
     AnomalyLog,
@@ -101,6 +101,9 @@ class SimulationEngine:
         self._next_action: dict[int, datetime] = {}  # lot_id -> next action due time
         self._next_equipment_recovery: dict[int, datetime] = {}
         self._next_anomaly_check_at: datetime | None = None
+        # equipment_id -> most recent A2A-style investigation task id, so the
+        # quality proposal made in the same (or a later) cycle can cite it
+        self._latest_investigation_task_id: dict[int, int] = {}
         # equipment_id -> (injected defect rate, expires_at); scenario injection only
         self._defect_bias: dict[int, tuple[float, datetime]] = {}
         # (override probability, expires_at); scenario injection only, lets a demo
@@ -282,7 +285,6 @@ class SimulationEngine:
         self._next_anomaly_check_at = now + timedelta(seconds=ANOMALY_CHECK_INTERVAL_SECONDS)
 
         anomalies = mes_main._detect_quality_anomalies(db)
-        self._propose_actions(db, anomalies, now)
         for anomaly in anomalies:
             suppress_since = now - timedelta(seconds=ANOMALY_LOG_SUPPRESS_SECONDS)
             recent = (
@@ -295,26 +297,37 @@ class SimulationEngine:
             )
             if recent is not None:
                 continue
-            db.add(
-                AnomalyLog(
-                    detected_at=now,
-                    equipment_id=anomaly.equipment_id,
-                    equipment_name=anomaly.equipment_name,
-                    process_step=anomaly.process_step,
-                    severity=anomaly.severity,
-                    defect_rate=anomaly.defect_rate,
-                    peer_mean_rate=anomaly.peer_mean_rate,
-                    z_score=anomaly.z_score,
-                    total_inspections=anomaly.total_inspections,
-                    method=mes_main.ANOMALY_METHOD,
-                )
+            log_row = AnomalyLog(
+                detected_at=now,
+                equipment_id=anomaly.equipment_id,
+                equipment_name=anomaly.equipment_name,
+                process_step=anomaly.process_step,
+                severity=anomaly.severity,
+                defect_rate=anomaly.defect_rate,
+                peer_mean_rate=anomaly.peer_mean_rate,
+                z_score=anomaly.z_score,
+                total_inspections=anomaly.total_inspections,
+                method=mes_main.ANOMALY_METHOD,
             )
+            db.add(log_row)
             db.commit()
+            db.refresh(log_row)
             self._log(
                 f"⚠️ 품질 이상 감지: {anomaly.equipment_name} ({anomaly.process_step}) "
                 f"{anomaly.severity} — 불량률 {anomaly.defect_rate * 100:.1f}% "
                 f"vs 동료 {anomaly.peer_mean_rate * 100:.1f}%"
             )
+            # A2A-style investigation task (see app/a2a.py): runs only for a
+            # newly-logged anomaly, not every check cycle a standing one
+            # repeats, same throttling as the AnomalyLog row itself. A
+            # failed investigation must never block the quality agent's own
+            # proposal below, which does not depend on it.
+            try:
+                task = a2a.investigate_quality_anomaly(db, anomaly, log_row.id, now)
+                self._latest_investigation_task_id[anomaly.equipment_id] = task.id
+            except Exception as exc:
+                logger.warning("quality investigation task skipped: %s", exc)
+        self._propose_actions(db, anomalies, now)
 
     # WATCH is left to the anomaly log; only WARNING/CRITICAL ask a human.
     _APPROVAL_RISK_BY_SEVERITY = {"WARNING": "HIGH", "CRITICAL": "CRITICAL"}
@@ -325,6 +338,8 @@ class SimulationEngine:
         if risk is None:
             return None
         z = f"{anomaly.z_score:.2f}" if anomaly.z_score is not None else "N/A"
+        task_id = self._latest_investigation_task_id.get(anomaly.equipment_id)
+        task_note = f" · A2A Task #{task_id}" if task_id is not None else ""
         return control_tower.Proposal(
             source_agent="rule:quality-anomaly",
             equipment_id=anomaly.equipment_id,
@@ -334,7 +349,7 @@ class SimulationEngine:
             evidence=(
                 f"불량률 {anomaly.defect_rate * 100:.1f}% vs 동일 공정 동료 평균 "
                 f"{anomaly.peer_mean_rate * 100:.1f}% · z-score {z} · "
-                f"검사 {anomaly.total_inspections}건"
+                f"검사 {anomaly.total_inspections}건{task_note}"
             ),
             risk_level=risk,
             action_kind="STOP_NEW_DISPATCH",

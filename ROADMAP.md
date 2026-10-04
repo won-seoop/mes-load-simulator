@@ -562,8 +562,65 @@
       실제 사람이 아니므로 이 타이밍은 사람의 인지 시간을 대표하지 않는다 — 이후 실제
       운영자/사용자가 대시보드에서 직접 승인/반려를 누르는 데이터가 쌓이면 재검증이 필요하다.
 
+- [x] (2026-10-05) A2A(Agent2Agent) Quality Investigation Agent 1단계 구현 — "다음 후보"에
+      남아 있던 "A2A Quality Investigation Agent: Agent Card, Task 상태, 조사 Artifact와
+      승인 Gate" 항목. Google이 공개하고 현재 Linux Foundation이 호스팅하는 A2A 프로토콜의
+      공개 개념 3가지(AgentCard: 에이전트가 할 수 있는 일을 알리는 정적 설명, Task: submitted
+      -> working -> completed/failed로 진행하는 작업 단위, Artifact: Task의 구조화된 출력물)만
+      빌려 기존 규칙 기반 품질 에이전트(`simulation.py`의 `_quality_proposal`)의 조사 과정을
+      감싸는 새 모듈 `app/a2a.py`를 추가했다 — A2A의 JSON-RPC 전송, 스트리밍, Push 알림 등
+      전체 프로토콜/SDK는 구현하지 않았고, `AGENT_CARD`의 `capabilities`에도
+      `streaming: false`/`pushNotifications: false`를 있는 그대로 표기해 과장하지 않았다.
+      삼성SDS는 A2A나 내부 에이전트 프로토콜을 공개한 바 없으므로 Nexplant와 연결짓지 않고
+      "공개된 A2A 개념을 참고해 자체 설계"로만 표현했다. 새 `InvestigationTask` 테이블(상태,
+      `anomaly_log_id` 연결, `artifact_json`)을 추가해, `_maybe_check_anomalies`가 새
+      `AnomalyLog` 행을 쓸 때(기존 5분 억제 로직 그대로 재사용 — 매 점검 주기가 아니라 신규
+      이상당 1회) `investigate_quality_anomaly()`를 호출해 해당 설비의 최근 30분 다운타임
+      이력을 모아 Artifact(불량률/동료평균/z-score/다운타임 목록)를 만들고 완료 상태로
+      전환한다. 중요한 순서 변경: 기존 코드는 `_propose_actions`(승인 큐로 가는 제안 생성)를
+      먼저 호출한 뒤 `AnomalyLog`를 기록했는데, 조사 Task를 그 제안의 근거로 인용하려면
+      Task가 먼저 만들어져야 해서 순서를 뒤집었다(로그 기록 → 조사 → 제안). `_quality_proposal`의
+      `evidence` 문자열 끝에 `A2A Task #<id>`를 덧붙여 승인 큐 화면에서 조사 결과로 바로
+      연결할 수 있게 했다. 조사 자체가 실패해도(예외) 기존 품질 제안 로직은 영향받지 않도록
+      try/except로 격리했다(이 Task는 증거를 보강할 뿐, 사람 승인 경로의 필수 경로가 아님).
+      읽기 전용 `GET /a2a/agent-card`, `GET /a2a/tasks`(설비 필터), `GET /a2a/tasks/{id}`
+      API와 `agent_gateway`의 `get_agent_card`/`get_investigation_tasks`/`get_investigation_task`
+      Tool 3개를 추가했다(기존 read-only 원칙 유지 — Command는 추가하지 않음). 이 Task도
+      LLM을 호출하지 않는다(규칙 기반 유지, HITL 트랙 원칙 (b): LLM 에이전트는 Baseline 이후).
+      승인/실행 Gate 자체는 바꾸지 않았다 — Task 완료는 근거를 승인 큐에 보강할 뿐, 여전히
+      사람이 승인해야 실행된다는 원칙(HITL 원칙 (a))은 그대로다. 검증: 신규 pytest 12개
+      (`tests/test_a2a.py` 9개 — AgentCard 필드, Task 완료/Artifact 내용, `anomaly_log_id`
+      연결, 다운타임 Lookback 윈도 포함/제외, `/a2a/agent-card`·`/a2a/tasks`·`/a2a/tasks/{id}`
+      엔드포인트와 404; `tests/test_control_tower.py` 1개 — `_seed_inspect03_anomaly`로 실제
+      이상을 만들어 `_maybe_check_anomalies`를 호출하면 `InvestigationTask`가 생성되고 그
+      id가 승인 요청 evidence에 그대로 나타나는지 통합 검증) 전체 197 -> 208개 통과. 격리
+      서버(포트 18401, 전용 DB)에 실제로 INSPECT-03만 불량나는 시나리오를 curl로 만들고
+      시뮬레이션을 켜서 실시간으로 확인: `GET /a2a/tasks`에 완료된 Task(불량률 100%, 최근
+      다운타임 2건 포함)가 나타났고, `GET /approvals`의 evidence에 정확히 `A2A Task #1`이
+      붙어 있었다. `agent_gateway/smoke_test.py`를 갱신해 신규 Tool 3개를 포함한 13개 전체
+      이름 assert와 `get_agent_card`/`get_investigation_tasks`의 실제 호출까지 확인했다
+      (agent_gateway 전용 `mcp[cli]` 패키지의 `pydantic`/`starlette` 버전이 메인 앱
+      requirements와 충돌하는 것을 발견해, 메인 venv를 agent_gateway 설치 전 상태로
+      재설치해 복구했다 — "다음 후보"에 분리된 venv 필요성으로 남긴다). 50 VU/3분
+      파이프라인 재확인(요청 15,332건, 실패율 0.00%, RPS 85.42, p95 200ms/p99 440ms, Server
+      5xx/IntegrityError 0 — 이 부하 시나리오는 `/simulation/start`를 호출하지 않으므로
+      A2A Task 생성 자체는 이번 리포트에 반영되지 않음, 기존에 이미 알려진 한계와 동일).
+      한계: Task는 품질 에이전트 1개에만 연결돼 있고(설비/생산 에이전트는 아직 미연결),
+      Task 실행은 여전히 동기(백그라운드 작업이 아님) — 지금 쿼리 비용으로는 문제없지만
+      조사 로직이 커지면 재검토 필요. A2A의 "진짜" 에이전트 간(A2A) 통신(여러 에이전트가
+      서로 Task를 주고받는 것)은 구현하지 않았다 — 지금은 한 에이전트 내부에서 Task
+      개념만 빌려 쓴 것이다.
+
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
+- [ ] agent_gateway/requirements.txt(`mcp[cli]`)를 메인 `.venv`에 그대로 설치하면 `pydantic`/
+      `starlette` 버전이 메인 앱 requirements와 충돌한다(2026-10-05에 실제로 겪음 — 메인
+      venv를 재설치해 복구). agent_gateway 전용 가상환경(`.venv-mcp/`, 이미 `.gitignore`에는
+      있지만 실제로 만들어 쓴 적은 없어 보임)을 분리해서 쓰거나, 적어도 이 사실을 README에
+      남겨 다음에 같은 실수를 반복하지 않게 할 가치가 있다.
+- [ ] A2A Quality Investigation Agent(2026-10-05)를 설비 에이전트/생산 에이전트에도 확장해
+      모든 규칙 기반 에이전트가 같은 Task/Artifact 패턴으로 조사 결과를 남기게 할지 검토.
+      지금은 품질 에이전트 1개만 연결돼 있다.
 - [ ] 오늘(2026-10-04) 승인 큐 지표 보정은 스크립트가 대신 결정한 합성 표본 4건 기반이었다 —
       실제 사람이 대시보드 승인 큐 화면에서 직접 승인/반려를 누른 데이터가 쌓이면
       (`decided_by`가 `demo-calibration`이 아닌 실제 사용자/운영자인 행 기준으로) 같은 네
@@ -596,7 +653,9 @@
 - [ ] 오늘 추가한 승인 큐 지표(승인율/수정율/대기시간/너무 빠른 승인 비율)를 시뮬레이션 엔진이
       자동으로 승인 요청을 만들도록 데모 시나리오를 하루 이상 돌려 실제 0이 아닌 값으로 채워보고,
       `fast_approval_rate` 임계값(5초)이 데모 시나리오에서 그럴듯한 값을 만드는지 확인
-- [ ] A2A Quality Investigation Agent: Agent Card, Task 상태, 조사 Artifact와 승인 Gate
+- [x] (2026-10-05 완료) ~~A2A Quality Investigation Agent: Agent Card, Task 상태, 조사
+      Artifact와 승인 Gate~~ → `app/a2a.py` + 품질 에이전트 연결로 구현. 완료 섹션과 위
+      "다음 후보"의 확장 항목(설비/생산 에이전트로 확대) 참고.
 - [ ] C# UI LOT 검색/Event Timeline과 Work Order 상세 화면
 - [ ] 품질 이상 신호에서 관련 LOT/검사/Event 자동 Drill-down
 - [ ] PostgreSQL 전환 후 조건부 UPDATE vs `SELECT FOR UPDATE` 동시성 비교

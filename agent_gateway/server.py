@@ -135,5 +135,32 @@ def get_audit_log(entity_type: str | None = None, entity_id: int | None = None) 
     return _get(path)
 
 
+@mcp.tool()
+def get_agent_card() -> dict:
+    """AgentCard-shaped description of the quality investigation agent
+    (name/skills/capabilities) -- see app/a2a.py for what this borrows from
+    the publicly described A2A protocol and what it does not implement."""
+    return _get("/a2a/agent-card")
+
+
+@mcp.tool()
+def get_investigation_tasks(equipment_id: int | None = None, limit: int = 20) -> list[dict]:
+    """A2A-style investigation tasks the quality agent created for detected
+    anomalies, most recent first. Each completed task carries an Artifact
+    (structured evidence: defect rate vs peers, z-score, recent downtime)."""
+    if limit < 1 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
+    query = [] if equipment_id is None else [f"equipment_id={int(equipment_id)}"]
+    query.append(f"limit={limit}")
+    return _get(f"/a2a/tasks?{'&'.join(query)}")
+
+
+@mcp.tool()
+def get_investigation_task(task_id: int) -> dict:
+    """One investigation task by id, including its state and Artifact (or
+    None if it is still working or failed)."""
+    return _get(f"/a2a/tasks/{int(task_id)}")
+
+
 if __name__ == "__main__":
     mcp.run()

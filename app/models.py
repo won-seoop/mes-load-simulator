@@ -332,3 +332,40 @@ class AuditLog(Base):
     before_value = Column(String, nullable=True)
     after_value = Column(String, nullable=True)
     reason = Column(String, nullable=True)
+
+
+class InvestigationTaskState(str, enum.Enum):
+    SUBMITTED = "submitted"
+    WORKING = "working"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class InvestigationTask(Base):
+    """One quality-investigation unit of work, modeled on the publicly
+    described A2A (Agent2Agent) protocol's Task lifecycle (submitted ->
+    working -> completed/failed) and its Artifact concept (a task's
+    structured output). This project does not implement the A2A wire
+    protocol or SDK (no JSON-RPC transport, no streaming, no push
+    notifications) — it only borrows that state model for the existing
+    rule-based quality agent's investigation step, since Samsung SDS has not
+    published an internal agent protocol to compare against (see app/a2a.py).
+
+    One row is created per newly-logged anomaly (the same per-equipment
+    suppression window `simulation.py` already uses for AnomalyLog), not per
+    anomaly-check tick, so a standing anomaly does not spawn a new task every
+    cycle while it persists.
+    """
+
+    __tablename__ = "investigation_task"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(String, nullable=False, default="quality-investigation-agent", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    state = Column(String, nullable=False, default=InvestigationTaskState.SUBMITTED.value, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id"), nullable=True, index=True)
+    equipment_name = Column(String, nullable=True)
+    anomaly_log_id = Column(Integer, ForeignKey("anomaly_log.id"), nullable=True, index=True)
+    artifact_json = Column(Text, nullable=True)
+    error = Column(String, nullable=True)

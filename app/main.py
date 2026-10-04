@@ -9,6 +9,7 @@ from sqlalchemy import case, func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import a2a
 from app import approvals as approvals_service
 from app import audit as audit_service
 from app.database import Base, SessionLocal, engine, get_db
@@ -21,6 +22,7 @@ from app.models import (
     EquipmentDowntimeEvent,
     EquipmentStatus,
     InspectionResult,
+    InvestigationTask,
     Lot,
     LotEvent,
     LotEventType,
@@ -1418,6 +1420,52 @@ def list_llm_agent_runs(db: Session = Depends(get_db)):
         }
         for r in rows
     ]
+
+
+@app.get("/a2a/agent-card")
+def get_agent_card():
+    """Static AgentCard-shaped description of the quality investigation
+    agent. See app/a2a.py for what this does and does not borrow from the
+    publicly described A2A (Agent2Agent) protocol."""
+    return a2a.AGENT_CARD
+
+
+def _investigation_task_out(t: InvestigationTask) -> dict:
+    return {
+        "id": t.id,
+        "agent_id": t.agent_id,
+        "created_at": t.created_at,
+        "updated_at": t.updated_at,
+        "state": t.state,
+        "equipment_id": t.equipment_id,
+        "equipment_name": t.equipment_name,
+        "anomaly_log_id": t.anomaly_log_id,
+        "error": t.error,
+        "artifact": a2a.artifact_of(t),
+    }
+
+
+@app.get("/a2a/tasks")
+def list_investigation_tasks(
+    equipment_id: Optional[int] = None, limit: int = 100, db: Session = Depends(get_db)
+):
+    """A2A-style investigation tasks created by the quality agent (see
+    app/a2a.py), most recent first. Read-only; nothing here executes an
+    action — a completed task's artifact only adds evidence to the proposal
+    that already goes through control_tower -> approval queue."""
+    query = db.query(InvestigationTask)
+    if equipment_id is not None:
+        query = query.filter(InvestigationTask.equipment_id == equipment_id)
+    rows = query.order_by(InvestigationTask.id.desc()).limit(min(limit, 500)).all()
+    return [_investigation_task_out(t) for t in rows]
+
+
+@app.get("/a2a/tasks/{task_id}")
+def get_investigation_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.get(InvestigationTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="investigation task not found")
+    return _investigation_task_out(task)
 
 
 @app.post("/simulation/start")
