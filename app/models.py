@@ -342,19 +342,22 @@ class InvestigationTaskState(str, enum.Enum):
 
 
 class InvestigationTask(Base):
-    """One quality-investigation unit of work, modeled on the publicly
-    described A2A (Agent2Agent) protocol's Task lifecycle (submitted ->
-    working -> completed/failed) and its Artifact concept (a task's
-    structured output). This project does not implement the A2A wire
-    protocol or SDK (no JSON-RPC transport, no streaming, no push
-    notifications) — it only borrows that state model for the existing
-    rule-based quality agent's investigation step, since Samsung SDS has not
-    published an internal agent protocol to compare against (see app/a2a.py).
+    """One investigation unit of work, modeled on the publicly described A2A
+    (Agent2Agent) protocol's Task lifecycle (submitted -> working ->
+    completed/failed) and its Artifact concept (a task's structured
+    output). This project does not implement the A2A wire protocol or SDK
+    (no JSON-RPC transport, no streaming, no push notifications) — it only
+    borrows that state model for the existing rule-based agents'
+    investigation steps, since Samsung SDS has not published an internal
+    agent protocol to compare against (see app/a2a.py). `agent_id`
+    distinguishes which rule-based agent created a given row (quality-anomaly
+    or equipment-downtime so far); `anomaly_log_id` is only set for the
+    quality agent's rows.
 
-    One row is created per newly-logged anomaly (the same per-equipment
-    suppression window `simulation.py` already uses for AnomalyLog), not per
-    anomaly-check tick, so a standing anomaly does not spawn a new task every
-    cycle while it persists.
+    One row is created per newly-detected condition (the same per-equipment
+    suppression window `simulation.py` already uses for AnomalyLog, reused
+    for equipment-downtime rows too), not per check tick, so a standing
+    condition does not spawn a new task every cycle while it persists.
     """
 
     __tablename__ = "investigation_task"

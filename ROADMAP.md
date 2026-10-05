@@ -611,16 +611,65 @@
       서로 Task를 주고받는 것)은 구현하지 않았다 — 지금은 한 에이전트 내부에서 Task
       개념만 빌려 쓴 것이다.
 
+- [x] (2026-10-06) A2A Quality Investigation Agent(2026-10-05)를 설비 에이전트
+      (`rule:equipment-downtime`)에도 확장했다 — 어제 "다음 후보"에 명시적으로 남겨둔 항목이다.
+      `app/a2a.py`에 두 번째 AgentCard(`EQUIPMENT_AGENT_CARD`, skill
+      `investigate-equipment-downtime`)와 `investigate_equipment_downtime()`을 추가했는데,
+      새 테이블을 만들지 않고 기존 `InvestigationTask`를 `agent_id`로만 구분해 그대로
+      재사용했다(둘 다 submitted/working/completed라는 같은 Task 모양이라 테이블을 복제할
+      이유가 없었다). 핵심 설계 결정 하나: Artifact가 보여주는 다운타임 건수가 그 조사를
+      유발한 제안의 건수와 항상 일치해야 한다고 판단해, `investigate_equipment_downtime()`이
+      조회 Lookback(window)을 자체적으로 고정하지 않고 호출자(`simulation.py`)가
+      `equipment_agent.EQUIPMENT_DOWN_WINDOW_SECONDS`(600초, 실제 감지에 쓰는 값과 동일)를
+      그대로 넘겨받게 했다 — 품질 조사가 쓰는 고정 1800초 Lookback과는 다른 값이며, 섞어 쓰면
+      Artifact와 제안의 근거 숫자가 서로 어긋나는 모순이 생길 수 있었다. 품질 에이전트와 같은
+      억제 로직(`ANOMALY_LOG_SUPPRESS_SECONDS=300초` 재사용)을 `simulation.py`에 새로 추가해,
+      같은 설비의 반복 DOWN 조건이 서 있는 동안 매 30초 점검 주기마다 새 Task를 만들지 않고
+      기존 Task id를 재사용하도록 했다(품질 에이전트는 `AnomalyLog` 중복 억제로 이미 같은
+      효과를 얻고 있었는데, 설비 에이전트에는 그런 로그 테이블이 없어서 `InvestigationTask`
+      자체를 5분 창으로 조회하는 방식을 썼다). `rule:equipment-downtime`의 두 함수 중
+      `propose_from_downtime`(설비 1대 반복 DOWN, `equipment_id` 보유)만 연결했고
+      `propose_from_concurrent_downs`(공장 전체 동시 다운, `equipment_id=None`)는 연결하지
+      않았다 — 조사 대상이 "이 설비의 다운타임 이력"이라 단일 설비가 없는 제안에는 같은 패턴이
+      그대로 맞지 않는다. 읽기 전용 `GET /a2a/agent-cards`(전체 에이전트 카드 목록, 기존
+      `GET /a2a/agent-card`는 하위 호환으로 유지)와 `agent_gateway`의 `get_agent_cards` Tool을
+      추가했다. 이 작업을 하다가 ROADMAP에 이미 "다음 후보"로 남겨 있던 또 다른 항목
+      (`agent_gateway` 전용 가상환경 `.venv-mcp/` 분리)도 실제로 만들어 써서 함께 해결했다 —
+      메인 `.venv`에는 `mcp[cli]`를 전혀 설치하지 않고 `.venv-mcp/`에서 `pytest`와 별개로
+      `agent_gateway/smoke_test.py`와 신규 Tool 2개를 검증해 2026-10-05에 겪었던 버전 충돌이
+      재발하지 않았다. 검증: 신규 pytest 7개(`tests/test_a2a.py` 5개 — 설비 AgentCard, 레지스트리,
+      조사 완료+Artifact, 호출자가 넘긴 window 적용, `/a2a/agent-cards` 엔드포인트;
+      `tests/test_control_tower.py` 2개 — 설비 다운타임 조사 Task가 생성되고 evidence에 인용되는지
+      통합 검증, 같은 조건이 5분 억제 창 안에서 두 번째 점검 때 새 Task를 만들지 않는지) 전체
+      208 -> 215개 통과. 격리 서버(포트 18700, 전용 DB)에서 설비 1대를 curl로 4회
+      DOWN/IDLE시키고 시뮬레이션을 켜서 실시간으로 확인: 첫 조사(Task #1, DOWN 4회)가
+      `GET /approvals`의 evidence에 `A2A Task #3`(품질 Task #2가 그 사이 끼어든 뒤 두 번째
+      설비 조사가 5분 억제 창을 벗어나 새로 생성됨)으로 정확히 인용되는 것까지 확인했다.
+      `.venv-mcp`의 `agent_gateway/smoke_test.py`도 신규 Tool 2개를 포함해 통과, MCP Client로
+      `get_agent_cards`/`get_investigation_tasks`를 직접 호출해 두 에이전트 이름과 `agent_id`가
+      구분되어 나오는 것도 확인했다. 50 VU/3분 파이프라인 재확인(요청 15,808건, 실패율 0.00%,
+      RPS 88.11, p95 150ms/p99 390ms, Server 5xx/IntegrityError 0 — 이 Locust 시나리오는
+      `/simulation/start`를 호출하지 않아 새 설비 투자 Task 생성 자체는 이번 리포트에 반영되지
+      않음, 품질 Task와 같은 기존 한계). 한계: 생산 에이전트(`rule:production-hold`)는 아직
+      연결하지 않았다(`equipment_id=None`이라 변형이 필요 — 다음 후보에 남김).
+
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
-- [ ] agent_gateway/requirements.txt(`mcp[cli]`)를 메인 `.venv`에 그대로 설치하면 `pydantic`/
-      `starlette` 버전이 메인 앱 requirements와 충돌한다(2026-10-05에 실제로 겪음 — 메인
-      venv를 재설치해 복구). agent_gateway 전용 가상환경(`.venv-mcp/`, 이미 `.gitignore`에는
-      있지만 실제로 만들어 쓴 적은 없어 보임)을 분리해서 쓰거나, 적어도 이 사실을 README에
-      남겨 다음에 같은 실수를 반복하지 않게 할 가치가 있다.
-- [ ] A2A Quality Investigation Agent(2026-10-05)를 설비 에이전트/생산 에이전트에도 확장해
-      모든 규칙 기반 에이전트가 같은 Task/Artifact 패턴으로 조사 결과를 남기게 할지 검토.
-      지금은 품질 에이전트 1개만 연결돼 있다.
+- [x] (2026-10-06 완료) ~~agent_gateway 전용 가상환경 분리~~ → `.venv-mcp/`를 실제로 만들어
+      `pip install -r agent_gateway/requirements.txt`로 `mcp[cli]`를 설치하고, 메인 `.venv`와
+      완전히 분리된 상태로 smoke test와 신규 Tool 2개(`get_agent_cards` 호출 포함)를 모두
+      통과시켰다 — 메인 venv는 전혀 건드리지 않아 2026-10-05에 겪었던 `pydantic`/`starlette`
+      충돌이 재발하지 않았다. README(`agent_gateway/README.md`)가 이미 이 명령을 문서화하고
+      있었다는 것도 확인했다(실제로 만들어 쓴 적만 없었던 것). 아래 완료 섹션 참고.
+- [x] (2026-10-06 완료) ~~A2A Quality Investigation Agent를 설비 에이전트에도 확장~~ →
+      `app/a2a.py`에 `investigate_equipment_downtime()`과 `EQUIPMENT_AGENT_CARD` 추가, 품질
+      에이전트와 같은 `InvestigationTask` 테이블을 `agent_id`로 구분해 재사용. 아래 완료 섹션
+      참고. 생산 에이전트(`rule:production-hold`)는 아직 연결되지 않았다 — 다음 항목.
+- [ ] A2A 투자 Task/Artifact 패턴을 생산 에이전트(`rule:production-hold`, 공정 스텝 HOLD 대기)에도
+      확장할지 검토. 품질(2026-10-05)·설비(2026-10-06) 에이전트는 이미 연결됐고, 생산 에이전트는
+      `equipment_id=None`(공정 스텝 단위)이라 기존 두 투자 함수처럼 단일 설비 다운타임 이력을
+      모으는 방식이 그대로 맞지 않는다 — 그 스텝에 배정된 설비 목록의 다운타임을 모으는 방식으로
+      변형이 필요할 것으로 보인다.
 - [ ] 오늘(2026-10-04) 승인 큐 지표 보정은 스크립트가 대신 결정한 합성 표본 4건 기반이었다 —
       실제 사람이 대시보드 승인 큐 화면에서 직접 승인/반려를 누른 데이터가 쌓이면
       (`decided_by`가 `demo-calibration`이 아닌 실제 사용자/운영자인 행 기준으로) 같은 네
@@ -699,6 +748,12 @@
       페이지네이션이 없다 — 하루 동안 기록이 그 이상 쌓이면 오래된 변경은 화면에서 조회할 방법이
       없다(API 자체는 `entity_id`로 좁혀 조회 가능하지만 UI에는 그 입력이 없음). 날짜/건수 기반
       페이지네이션이나 "더 보기" 버튼을 추가할 가치가 있는지 다음에 실제 누적량을 보고 판단한다.
+
+- [ ] 대시보드 "이상 이력"/"승인 큐" 화면에 오늘 추가한 설비 조사 Task(`GET /a2a/tasks`,
+      `agent_id=equipment-investigation-agent`)를 아직 노출하지 않았다 — 지금은 API/MCP
+      Gateway로만 조회 가능하다(품질 조사 Task도 2026-10-05부터 같은 상태). 두 에이전트의
+      Task/Artifact를 설비 상세 드릴다운 드로어나 승인 큐 카드에 "조사 근거 보기"로 보여줄
+      가치가 있는지 판단.
 
 ## 에이전트 작업 원칙
 

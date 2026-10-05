@@ -139,15 +139,29 @@ def get_audit_log(entity_type: str | None = None, entity_id: int | None = None) 
 def get_agent_card() -> dict:
     """AgentCard-shaped description of the quality investigation agent
     (name/skills/capabilities) -- see app/a2a.py for what this borrows from
-    the publicly described A2A protocol and what it does not implement."""
+    the publicly described A2A protocol and what it does not implement.
+    Kept for backward compatibility; see get_agent_cards for every
+    registered investigation agent."""
     return _get("/a2a/agent-card")
 
 
 @mcp.tool()
+def get_agent_cards() -> list[dict]:
+    """AgentCard-shaped description of every registered investigation agent
+    (quality-investigation-agent and equipment-investigation-agent so far)
+    -- see app/a2a.py for what this borrows from the publicly described
+    A2A protocol and what it does not implement."""
+    return _get("/a2a/agent-cards")
+
+
+@mcp.tool()
 def get_investigation_tasks(equipment_id: int | None = None, limit: int = 20) -> list[dict]:
-    """A2A-style investigation tasks the quality agent created for detected
-    anomalies, most recent first. Each completed task carries an Artifact
-    (structured evidence: defect rate vs peers, z-score, recent downtime)."""
+    """A2A-style investigation tasks the quality and equipment agents created
+    (most recent first, distinguishable by the `agent_id` field). A completed
+    quality-investigation-agent task's Artifact carries defect rate vs peers,
+    z-score and recent downtime; a completed equipment-investigation-agent
+    task's Artifact carries the DOWN count and reasons in the detection
+    window that triggered it."""
     if limit < 1 or limit > 100:
         raise ValueError("limit must be between 1 and 100")
     query = [] if equipment_id is None else [f"equipment_id={int(equipment_id)}"]

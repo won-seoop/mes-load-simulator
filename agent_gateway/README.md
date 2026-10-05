@@ -19,6 +19,12 @@ MCP는 Agent 간 작업 위임 프로토콜이 아니라, Host가 MES 데이터�
 - Tool `get_control_tower_decisions`: 컨트롤타워의 BLOCK/AUTO_RECORD/QUEUE 판정 이력(병합 근거 포함)
 - Tool `get_audit_log`: 설비 상태 PATCH·작업지시 Release·승인 결정의 누가/언제/무엇을/왜 통합 이력
   (entity_type/entity_id로 필터)
+- Tool `get_agent_card`: 품질 조사 에이전트(quality-investigation-agent)의 AgentCard(이름/skills/capabilities).
+  하위 호환용으로 유지 — 모든 등록 에이전트를 보려면 `get_agent_cards` 사용
+- Tool `get_agent_cards`: 등록된 모든 조사 에이전트(품질·설비)의 AgentCard 목록
+- Tool `get_investigation_tasks`: 품질·설비 조사 에이전트가 만든 A2A 스타일 Task 목록(`agent_id`로 구분,
+  equipment_id로 필터)
+- Tool `get_investigation_task`: Task 1건의 상태와 Artifact(불량률/다운타임 근거 등 구조화된 조사 결과)
 
 현재 단계는 의도적으로 read-only다. 작업지시 Release, 설비 상태 변경, Scrap/Rework 같은 생산 Command를
 LLM이 직접 실행하지 않는다.

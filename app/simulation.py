@@ -18,7 +18,7 @@ import asyncio
 import logging
 import random
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 
 from fastapi import HTTPException
@@ -33,6 +33,7 @@ from app.models import (
     Equipment,
     EquipmentStatus,
     InspectionResult,
+    InvestigationTask,
     Lot,
     LotEvent,
     LotEventType,
@@ -104,6 +105,9 @@ class SimulationEngine:
         # equipment_id -> most recent A2A-style investigation task id, so the
         # quality proposal made in the same (or a later) cycle can cite it
         self._latest_investigation_task_id: dict[int, int] = {}
+        # equipment_id -> most recent A2A-style equipment-downtime investigation
+        # task id, same purpose as above but for rule:equipment-downtime proposals
+        self._latest_equipment_investigation_task_id: dict[int, int] = {}
         # equipment_id -> (injected defect rate, expires_at); scenario injection only
         self._defect_bias: dict[int, tuple[float, datetime]] = {}
         # (override probability, expires_at); scenario injection only, lets a demo
@@ -356,11 +360,55 @@ class SimulationEngine:
             dedupe_key=f"quality-anomaly:{anomaly.equipment_id}",
         )
 
+    def _investigate_equipment_downtime_proposal(
+        self, db: Session, proposal: control_tower.Proposal, now: datetime
+    ) -> control_tower.Proposal:
+        """A2A-style investigation task (see app/a2a.py) for one
+        rule:equipment-downtime proposal: runs only when this equipment has no
+        investigation task within the same suppression window already (a
+        standing repeated-DOWN condition must not spawn a new task every
+        30-second check cycle while it persists). A failed or skipped
+        investigation must never block the equipment agent's own proposal,
+        which does not depend on it."""
+        if proposal.equipment_id is None:
+            return proposal
+        try:
+            suppress_since = now - timedelta(seconds=ANOMALY_LOG_SUPPRESS_SECONDS)
+            recent_task = (
+                db.query(InvestigationTask)
+                .filter(
+                    InvestigationTask.agent_id == a2a.EQUIPMENT_AGENT_ID,
+                    InvestigationTask.equipment_id == proposal.equipment_id,
+                    InvestigationTask.created_at >= suppress_since,
+                )
+                .order_by(InvestigationTask.id.desc())
+                .first()
+            )
+            if recent_task is not None:
+                task_id = recent_task.id
+            else:
+                task = a2a.investigate_equipment_downtime(
+                    db,
+                    proposal.equipment_id,
+                    proposal.equipment_name,
+                    equipment_agent.EQUIPMENT_DOWN_WINDOW_SECONDS,
+                    now,
+                )
+                task_id = task.id
+            self._latest_equipment_investigation_task_id[proposal.equipment_id] = task_id
+            return replace(proposal, evidence=f"{proposal.evidence} · A2A Task #{task_id}")
+        except Exception as exc:
+            logger.warning("equipment investigation skipped: %s", exc)
+            return proposal
+
     def _propose_actions(self, db: Session, anomalies, now: datetime) -> None:
         """Agents only propose; the control tower merges, gates and queues. A
         standing condition folds into one approval row rather than one per cycle."""
         proposals = [p for a in anomalies if (p := self._quality_proposal(a)) is not None]
-        proposals += equipment_agent.propose_from_downtime(db, now)
+        proposals += [
+            self._investigate_equipment_downtime_proposal(db, p, now)
+            for p in equipment_agent.propose_from_downtime(db, now)
+        ]
         proposals += equipment_agent.propose_from_concurrent_downs(db, now)
         proposals += production_agent.propose_from_step_hold_wait(db, now)
         try:

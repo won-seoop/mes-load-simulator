@@ -145,3 +145,71 @@ def test_a2a_task_detail_returns_artifact(client, db):
     body = response.json()
     assert body["state"] == "completed"
     assert body["artifact"]["evidence"]["total_inspections"] == 20
+
+
+def test_equipment_agent_card_reports_honest_capabilities():
+    assert a2a.EQUIPMENT_AGENT_CARD["name"] == "equipment-investigation-agent"
+    assert a2a.EQUIPMENT_AGENT_CARD["capabilities"] == {"streaming": False, "pushNotifications": False}
+    assert [s["id"] for s in a2a.EQUIPMENT_AGENT_CARD["skills"]] == ["investigate-equipment-downtime"]
+
+
+def test_agent_cards_registry_includes_both_agents():
+    names = {card["name"] for card in a2a.AGENT_CARDS}
+    assert names == {"quality-investigation-agent", "equipment-investigation-agent"}
+
+
+def test_equipment_investigation_task_completes_with_an_artifact(db):
+    db.add(
+        EquipmentDowntimeEvent(
+            equipment_id=1,
+            reason="RANDOM_FAULT",
+            started_at=T0 - timedelta(seconds=60),
+            ended_at=T0 - timedelta(seconds=30),
+            duration_seconds=30.0,
+        )
+    )
+    db.add(
+        EquipmentDowntimeEvent(
+            equipment_id=1,
+            reason="RANDOM_FAULT",
+            started_at=T0 - timedelta(seconds=200),
+            ended_at=T0 - timedelta(seconds=180),
+            duration_seconds=20.0,
+        )
+    )
+    db.commit()
+
+    task = a2a.investigate_equipment_downtime(db, 1, "ETCH-01", window_seconds=600.0, now=T0)
+
+    assert task.state == "completed"
+    assert task.agent_id == a2a.EQUIPMENT_AGENT_ID
+    assert task.anomaly_log_id is None
+    artifact = a2a.artifact_of(task)
+    assert artifact["name"] == "equipment-investigation-result"
+    assert artifact["evidence"]["down_count_in_window"] == 2
+    assert artifact["evidence"]["by_reason"] == {"RANDOM_FAULT": 2}
+
+
+def test_equipment_investigation_respects_the_caller_supplied_window(db):
+    db.add(
+        EquipmentDowntimeEvent(
+            equipment_id=1,
+            reason="RANDOM_FAULT",
+            started_at=T0 - timedelta(seconds=700),
+            ended_at=T0 - timedelta(seconds=680),
+            duration_seconds=20.0,
+        )
+    )
+    db.commit()
+
+    task = a2a.investigate_equipment_downtime(db, 1, "ETCH-01", window_seconds=600.0, now=T0)
+
+    assert a2a.artifact_of(task)["evidence"]["down_count_in_window"] == 0
+
+
+def test_a2a_agent_cards_endpoint(client):
+    response = client.get("/a2a/agent-cards")
+
+    assert response.status_code == 200
+    names = {card["name"] for card in response.json()}
+    assert names == {"quality-investigation-agent", "equipment-investigation-agent"}

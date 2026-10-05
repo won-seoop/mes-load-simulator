@@ -24,6 +24,7 @@ async def main() -> None:
             "get_control_tower_decisions",
             "get_audit_log",
             "get_agent_card",
+            "get_agent_cards",
             "get_investigation_tasks",
             "get_investigation_task",
         }
@@ -60,6 +61,9 @@ async def main() -> None:
 
         agent_card_result = await client.call_tool("get_agent_card", {})
         assert not agent_card_result.is_error
+
+        agent_cards_result = await client.call_tool("get_agent_cards", {})
+        assert not agent_cards_result.is_error
 
         investigation_tasks_result = await client.call_tool("get_investigation_tasks", {})
         assert not investigation_tasks_result.is_error

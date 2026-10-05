@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import control_tower as ct
+from app import a2a, control_tower as ct
 from app import equipment_agent
 from app.database import SessionLocal
 from app.models import ApprovalRequest, ControlTowerDecision, EquipmentDowntimeEvent, InvestigationTask
@@ -283,6 +283,43 @@ def test_quality_anomaly_creates_an_investigation_task_cited_in_the_evidence(cli
 
     row = db.query(ApprovalRequest).one()
     assert f"A2A Task #{tasks[0].id}" in row.evidence
+
+
+def test_equipment_downtime_creates_an_investigation_task_cited_in_the_evidence(client, db, monkeypatch):
+    """Same A2A-style pattern as the quality agent (app/a2a.py), applied to
+    rule:equipment-downtime: a fresh repeated-DOWN proposal must produce an
+    investigation task whose id is cited in the proposal's evidence."""
+    eq = _equipment(client, "ETCH-01")
+    _add_downs(db, eq["id"], 4)
+
+    _check(SimulationEngine(), monkeypatch, T0)
+
+    tasks = db.query(InvestigationTask).filter(InvestigationTask.agent_id == a2a.EQUIPMENT_AGENT_ID).all()
+    assert len(tasks) == 1
+    assert tasks[0].state == "completed"
+    assert tasks[0].equipment_id == eq["id"]
+    assert tasks[0].anomaly_log_id is None
+
+    row = db.query(ApprovalRequest).one()
+    assert f"A2A Task #{tasks[0].id}" in row.evidence
+
+
+def test_equipment_downtime_investigation_is_not_repeated_within_the_suppression_window(
+    client, db, monkeypatch
+):
+    """A standing repeated-DOWN condition must not spawn a new investigation
+    task on every 30-second check cycle while it persists (same suppression
+    window the quality agent's AnomalyLog already uses)."""
+    eq = _equipment(client, "ETCH-01")
+    _add_downs(db, eq["id"], 4)
+
+    _check(SimulationEngine(), monkeypatch, T0)
+    second_check = T0 + timedelta(seconds=30)
+    _add_downs(db, eq["id"], 1, end=second_check, spacing=0)
+    _check(SimulationEngine(), monkeypatch, second_check)
+
+    tasks = db.query(InvestigationTask).filter(InvestigationTask.agent_id == a2a.EQUIPMENT_AGENT_ID).all()
+    assert len(tasks) == 1
 
 
 def test_watch_anomaly_still_creates_no_approval_request(client, db, monkeypatch):

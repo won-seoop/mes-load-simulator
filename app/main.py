@@ -1426,8 +1426,19 @@ def list_llm_agent_runs(db: Session = Depends(get_db)):
 def get_agent_card():
     """Static AgentCard-shaped description of the quality investigation
     agent. See app/a2a.py for what this does and does not borrow from the
-    publicly described A2A (Agent2Agent) protocol."""
+    publicly described A2A (Agent2Agent) protocol. Kept for backward
+    compatibility with existing callers that expect a single card; use
+    GET /a2a/agent-cards to discover every registered investigation agent."""
     return a2a.AGENT_CARD
+
+
+@app.get("/a2a/agent-cards")
+def list_agent_cards():
+    """Static AgentCard-shaped description of every registered investigation
+    agent (quality-investigation-agent and equipment-investigation-agent so
+    far). See app/a2a.py for what this borrows from the publicly described
+    A2A (Agent2Agent) protocol and what it does not implement."""
+    return a2a.AGENT_CARDS
 
 
 def _investigation_task_out(t: InvestigationTask) -> dict:
