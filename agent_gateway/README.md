@@ -21,8 +21,8 @@ MCP는 Agent 간 작업 위임 프로토콜이 아니라, Host가 MES 데이터�
   (entity_type/entity_id로 필터)
 - Tool `get_agent_card`: 품질 조사 에이전트(quality-investigation-agent)의 AgentCard(이름/skills/capabilities).
   하위 호환용으로 유지 — 모든 등록 에이전트를 보려면 `get_agent_cards` 사용
-- Tool `get_agent_cards`: 등록된 모든 조사 에이전트(품질·설비)의 AgentCard 목록
-- Tool `get_investigation_tasks`: 품질·설비 조사 에이전트가 만든 A2A 스타일 Task 목록(`agent_id`로 구분,
+- Tool `get_agent_cards`: 등록된 모든 조사 에이전트(품질·설비·생산 공정 스텝 정체)의 AgentCard 목록
+- Tool `get_investigation_tasks`: 품질·설비·생산 조사 에이전트가 만든 A2A 스타일 Task 목록(`agent_id`로 구분,
   equipment_id로 필터)
 - Tool `get_investigation_task`: Task 1건의 상태와 Artifact(불량률/다운타임 근거 등 구조화된 조사 결과)
 

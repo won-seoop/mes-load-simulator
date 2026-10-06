@@ -40,6 +40,12 @@ class Proposal:
     risk_level: str
     action_kind: str
     dedupe_key: str
+    # How far back (seconds) the evidence behind this proposal actually
+    # spans, e.g. the HOLD wait rule:production-hold just measured. Optional
+    # because only a per-step proposal (no single equipment_id to pin an A2A
+    # investigation window to, see app/a2a.py) needs to carry this through to
+    # the investigation step; other agents already use a fixed constant.
+    window_seconds: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.risk_level not in RISK_ORDER:

@@ -153,9 +153,13 @@ def test_equipment_agent_card_reports_honest_capabilities():
     assert [s["id"] for s in a2a.EQUIPMENT_AGENT_CARD["skills"]] == ["investigate-equipment-downtime"]
 
 
-def test_agent_cards_registry_includes_both_agents():
+def test_agent_cards_registry_includes_all_three_agents():
     names = {card["name"] for card in a2a.AGENT_CARDS}
-    assert names == {"quality-investigation-agent", "equipment-investigation-agent"}
+    assert names == {
+        "quality-investigation-agent",
+        "equipment-investigation-agent",
+        "production-investigation-agent",
+    }
 
 
 def test_equipment_investigation_task_completes_with_an_artifact(db):
@@ -207,9 +211,96 @@ def test_equipment_investigation_respects_the_caller_supplied_window(db):
     assert a2a.artifact_of(task)["evidence"]["down_count_in_window"] == 0
 
 
+def _etch_equipment_ids(client) -> list[int]:
+    return [eq["id"] for eq in client.get("/equipment").json() if eq["process_step"] == "ETCH"]
+
+
+def test_production_investigation_pools_downtime_across_the_steps_equipment(client, db):
+    etch_ids = _etch_equipment_ids(client)
+    assert len(etch_ids) == 3
+    db.add(
+        EquipmentDowntimeEvent(
+            equipment_id=etch_ids[0],
+            reason="RANDOM_FAULT",
+            started_at=T0 - timedelta(seconds=60),
+            ended_at=T0 - timedelta(seconds=30),
+            duration_seconds=30.0,
+        )
+    )
+    db.add(
+        EquipmentDowntimeEvent(
+            equipment_id=etch_ids[1],
+            reason="FAULT_INJECTION",
+            started_at=T0 - timedelta(seconds=50),
+            ended_at=T0 - timedelta(seconds=40),
+            duration_seconds=10.0,
+        )
+    )
+    db.commit()
+
+    task = a2a.investigate_step_hold(db, "ETCH", window_seconds=94.0, now=T0)
+
+    assert task.state == "completed"
+    assert task.agent_id == a2a.PRODUCTION_AGENT_ID
+    assert task.equipment_id is None
+    assert task.equipment_name == "ETCH"
+    artifact = a2a.artifact_of(task)
+    assert artifact["name"] == "production-investigation-result"
+    assert artifact["process_step"] == "ETCH"
+    assert artifact["equipment_count"] == 3
+    assert artifact["evidence"]["down_count_in_window"] == 2
+    # Pooled across both downed tools on the step, not just one.
+    assert set(artifact["evidence"]["by_equipment"].values()) == {1, 1}
+
+
+def test_production_investigation_includes_downtime_that_started_just_before_the_window(client, db):
+    """Regression for a bug found live: window_seconds is exactly the HOLD's
+    own wait (now - hold_started_at), so the downtime that *caused* the HOLD
+    can start a few milliseconds *before* that cutoff (the last tool on the
+    step must go down before the lot is HELD, not after). A still-open
+    downtime event must count regardless of exactly when it started."""
+    etch_ids = _etch_equipment_ids(client)
+    db.add(
+        EquipmentDowntimeEvent(
+            equipment_id=etch_ids[0],
+            reason="MANUAL",
+            started_at=T0 - timedelta(seconds=34.59) - timedelta(milliseconds=32),
+            ended_at=None,
+            duration_seconds=None,
+        )
+    )
+    db.commit()
+
+    task = a2a.investigate_step_hold(db, "ETCH", window_seconds=34.59, now=T0)
+
+    assert a2a.artifact_of(task)["evidence"]["down_count_in_window"] == 1
+
+
+def test_production_investigation_respects_the_caller_supplied_window(client, db):
+    etch_ids = _etch_equipment_ids(client)
+    db.add(
+        EquipmentDowntimeEvent(
+            equipment_id=etch_ids[0],
+            reason="RANDOM_FAULT",
+            started_at=T0 - timedelta(seconds=200),
+            ended_at=T0 - timedelta(seconds=190),
+            duration_seconds=10.0,
+        )
+    )
+    db.commit()
+
+    task = a2a.investigate_step_hold(db, "ETCH", window_seconds=94.0, now=T0)
+
+    assert a2a.artifact_of(task)["evidence"]["down_count_in_window"] == 0
+
+
 def test_a2a_agent_cards_endpoint(client):
     response = client.get("/a2a/agent-cards")
 
     assert response.status_code == 200
     names = {card["name"] for card in response.json()}
-    assert names == {"quality-investigation-agent", "equipment-investigation-agent"}
+    assert names == {
+        "quality-investigation-agent",
+        "equipment-investigation-agent",
+        "production-investigation-agent",
+    }

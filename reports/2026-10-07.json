@@ -1,0 +1,130 @@
+{
+  "date": "2026-10-07",
+  "load_test": {
+    "requests": 16257,
+    "failures": 0,
+    "failure_rate": 0.0,
+    "rps": 90.68309533305417,
+    "p95_ms": 34.0,
+    "p99_ms": 85.0,
+    "avg_ms": 12.417336014393815,
+    "business_conflicts": 31,
+    "server_5xx": 0,
+    "integrity_errors": 0
+  },
+  "mes_metrics": {
+    "wip_count": 2397,
+    "completed_today": 177,
+    "scrap_count": 1,
+    "yield_rate": 0.9944,
+    "avg_cycle_time_seconds": 19.6,
+    "equipment_utilization": {
+      "ETCH-01": 162.5,
+      "ETCH-02": 166.7,
+      "ETCH-03": 166.4,
+      "CVD-01": 173.4,
+      "CVD-02": 178.9,
+      "CVD-03": 162.1,
+      "CMP-01": 161.0,
+      "CMP-02": 153.9,
+      "CMP-03": 142.9,
+      "INSPECT-01": 170.9,
+      "INSPECT-02": 153.1,
+      "INSPECT-03": 167.5
+    },
+    "throughput_per_hour": 177.0,
+    "lots_on_hold_count": 0,
+    "longest_current_hold_seconds": null,
+    "avg_resolved_hold_seconds": 20.3,
+    "oee_availability": 0.9248,
+    "oee_performance": 1.0,
+    "oee_quality": 0.9944,
+    "oee": 0.9196
+  },
+  "mes_metrics_peak_during_run": {
+    "sample_count": 18,
+    "peak_lots_on_hold_count": 40,
+    "peak_longest_hold_seconds": 34.3
+  },
+  "quality_metrics": {
+    "total_inspections": 191,
+    "pass_count": 177,
+    "fail_count": 14,
+    "defect_rate": 0.0733,
+    "first_pass_yield": 0.9312,
+    "scrap_count": 1,
+    "rework_count": 13,
+    "rework_rate": 0.0688,
+    "defects_by_process": {
+      "INSPECT": 14
+    },
+    "defects_by_equipment": {
+      "INSPECT-03": 14
+    }
+  },
+  "quality_anomalies": {
+    "generated_at": "2026-10-06T22:25:48.127690",
+    "method": "same-process peer defect-rate comparison",
+    "minimum_inspections": 10,
+    "minimum_rate_delta": 0.1,
+    "minimum_z_score": 2.0,
+    "anomalies": [
+      {
+        "equipment_id": 12,
+        "equipment_name": "INSPECT-03",
+        "process_step": "INSPECT",
+        "total_inspections": 63,
+        "fail_count": 14,
+        "defect_rate": 0.2222,
+        "peer_mean_rate": 0.0,
+        "peer_stddev": 0.0,
+        "z_score": null,
+        "rate_delta": 0.2222,
+        "severity": "WARNING"
+      }
+    ]
+  },
+  "equipment_reliability": {
+    "equipment_with_recorded_failures": 11,
+    "mttr_seconds_by_equipment": {
+      "ETCH-01": 5.5,
+      "ETCH-02": 6.2,
+      "ETCH-03": 6.1,
+      "CVD-01": 5.5,
+      "CVD-03": 5.4,
+      "CMP-01": 5.2,
+      "CMP-02": 5.6,
+      "CMP-03": 5.3,
+      "INSPECT-01": 5.3,
+      "INSPECT-02": 5.1,
+      "INSPECT-03": 5.6
+    },
+    "mtbf_seconds_by_equipment": {
+      "ETCH-01": 54.7,
+      "ETCH-02": 84.2,
+      "ETCH-03": 84.3,
+      "CVD-01": 175.2,
+      "CVD-03": 55.1,
+      "CMP-01": 55.1,
+      "CMP-02": 39.6,
+      "CMP-03": 24.9,
+      "INSPECT-01": 175.4,
+      "INSPECT-02": 40.0,
+      "INSPECT-03": 175.1
+    },
+    "downtime_seconds_by_reason": {
+      "STEP_FAULT_INJECTION": {
+        "count": 3,
+        "closed_count": 3,
+        "total_seconds": 19.7,
+        "mean_seconds": 6.6
+      },
+      "FAULT_INJECTION": {
+        "count": 27,
+        "closed_count": 26,
+        "total_seconds": 138.6,
+        "mean_seconds": 5.3
+      }
+    }
+  }
+}

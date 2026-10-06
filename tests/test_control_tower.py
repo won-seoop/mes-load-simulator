@@ -322,6 +322,44 @@ def test_equipment_downtime_investigation_is_not_repeated_within_the_suppression
     assert len(tasks) == 1
 
 
+def test_production_hold_creates_an_investigation_task_cited_in_the_evidence(client, db, monkeypatch):
+    """Same A2A-style pattern as the quality/equipment agents (app/a2a.py),
+    applied to rule:production-hold: a fresh step-wide HOLD proposal must
+    produce an investigation task whose id is cited in the proposal's
+    evidence. Unlike the other two agents, this task has no equipment_id
+    (the whole step, not one tool, is the subject)."""
+    _, step, _ = _hold_lot_at_step(client, monkeypatch, T0)
+    checked_at = T0 + timedelta(seconds=production_agent.HOLD_RISK_TIERS[1][0])
+
+    _check(SimulationEngine(), monkeypatch, checked_at)
+
+    tasks = db.query(InvestigationTask).filter(InvestigationTask.agent_id == a2a.PRODUCTION_AGENT_ID).all()
+    assert len(tasks) == 1
+    assert tasks[0].state == "completed"
+    assert tasks[0].equipment_id is None
+    assert tasks[0].equipment_name == step
+
+    row = db.query(ApprovalRequest).one()
+    assert f"A2A Task #{tasks[0].id}" in row.evidence
+
+
+def test_production_hold_investigation_is_not_repeated_within_the_suppression_window(
+    client, db, monkeypatch
+):
+    """A standing step-wide HOLD must not spawn a new investigation task on
+    every 30-second check cycle while it persists (same suppression window
+    the quality/equipment investigation agents already use)."""
+    _hold_lot_at_step(client, monkeypatch, T0)
+    first_check = T0 + timedelta(seconds=production_agent.HOLD_RISK_TIERS[1][0])
+    _check(SimulationEngine(), monkeypatch, first_check)
+
+    second_check = first_check + timedelta(seconds=30)
+    _check(SimulationEngine(), monkeypatch, second_check)
+
+    tasks = db.query(InvestigationTask).filter(InvestigationTask.agent_id == a2a.PRODUCTION_AGENT_ID).all()
+    assert len(tasks) == 1
+
+
 def test_watch_anomaly_still_creates_no_approval_request(client, db, monkeypatch):
     from app import main as mes_main
 

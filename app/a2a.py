@@ -28,9 +28,10 @@ from collections import Counter
 from datetime import datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from app.models import EquipmentDowntimeEvent, InvestigationTask, InvestigationTaskState
+from app.models import Equipment, EquipmentDowntimeEvent, InvestigationTask, InvestigationTaskState
 
 logger = logging.getLogger("app.a2a")
 
@@ -95,9 +96,42 @@ EQUIPMENT_AGENT_CARD = {
     ],
 }
 
+PRODUCTION_AGENT_ID = "production-investigation-agent"
+
+# A third AgentCard, same honesty rules as the two above: this agent is
+# polled from the simulation tick, not streamed or pushed to.
+PRODUCTION_AGENT_CARD = {
+    "name": PRODUCTION_AGENT_ID,
+    "description": (
+        "공정 스텝 전체가 HOLD로 정체된 것이 감지되면 그 스텝에 배정된 설비들의 "
+        "최근 다운타임 이력을 모아 조사 결과(Artifact)를 만드는 규칙 기반 조사 "
+        "에이전트. LLM을 호출하지 않으며, 조치를 직접 실행하지 않는다 — 결과는 "
+        "승인 큐로만 전달된다."
+    ),
+    "version": "0.1.0",
+    "provider": "FactoryFlow MES Lab (self-built; not Samsung SDS Nexplant)",
+    "capabilities": {
+        "streaming": False,
+        "pushNotifications": False,
+    },
+    "skills": [
+        {
+            "id": "investigate-step-hold",
+            "name": "Investigate process step hold",
+            "description": (
+                "rule:production-hold (app/production_agent.py)가 한 공정 스텝의 "
+                "모든 설비가 DOWN이라 로트가 HOLD로 쌓인 것을 감지해 제안을 만들 때 "
+                "한 번 조사한다: 그 스텝에 배정된 설비들의 다운타임 이력을 설비별로 "
+                "집계해 Artifact로 남긴다(단일 설비 조사와 달리, 대상이 한 설비가 "
+                "아니라 그 스텝에 속한 설비 전체다)."
+            ),
+        }
+    ],
+}
+
 # Every registered agent's static card, for a caller that wants to discover
 # all investigation agents at once rather than one at a time.
-AGENT_CARDS = [AGENT_CARD, EQUIPMENT_AGENT_CARD]
+AGENT_CARDS = [AGENT_CARD, EQUIPMENT_AGENT_CARD, PRODUCTION_AGENT_CARD]
 
 # How far back (seconds) to pull downtime events into the quality
 # investigation artifact's evidence. Generous enough to catch a fault that
@@ -115,7 +149,15 @@ def _recent_downtime(
         db.query(EquipmentDowntimeEvent)
         .filter(
             EquipmentDowntimeEvent.equipment_id == equipment_id,
-            EquipmentDowntimeEvent.started_at >= since,
+            # A downtime event still open right now (ended_at is NULL) is
+            # always in scope no matter when it started -- the tool is down
+            # *right now*, which is always relevant to "what's happening to
+            # this equipment". Dropping the `started_at >= since` clause for
+            # open rows avoids clipping the one downtime actually causing the
+            # investigation when it started a moment before `since` (see the
+            # equivalent, user-visible version of this bug documented at
+            # _recent_downtime_for_equipment_ids below).
+            or_(EquipmentDowntimeEvent.started_at >= since, EquipmentDowntimeEvent.ended_at.is_(None)),
         )
         .order_by(EquipmentDowntimeEvent.started_at.desc())
         .all()
@@ -253,6 +295,118 @@ def investigate_equipment_downtime(
         task.state = InvestigationTaskState.COMPLETED.value
     except Exception as exc:  # the equipment agent's own proposal must not depend on this
         logger.warning("equipment investigation task %s failed: %s", task.id, exc)
+        task.state = InvestigationTaskState.FAILED.value
+        task.error = str(exc)
+    task.updated_at = now
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def _recent_downtime_for_equipment_ids(
+    db: Session, equipment_ids: list[int], now: datetime, lookback_seconds: float
+) -> list[dict]:
+    if not equipment_ids:
+        return []
+    since = now - timedelta(seconds=lookback_seconds)
+    rows = (
+        db.query(EquipmentDowntimeEvent)
+        .filter(
+            EquipmentDowntimeEvent.equipment_id.in_(equipment_ids),
+            # window_seconds for the production investigation is exactly the
+            # HOLD's own wait (now - hold_started_at, see
+            # investigate_step_hold), so `since` lands almost exactly on the
+            # moment the HOLD began -- and the downtime that *caused* the
+            # HOLD necessarily started at or microseconds *before* that
+            # instant (the last tool on the step must go down before
+            # advance_lot() can HOLD the lot), not after. A strict
+            # `started_at >= since` therefore clips the one piece of
+            # evidence the investigation exists to show (found live: the
+            # very first manual repro of this investigation returned
+            # down_count_in_window=0 while all 3 ETCH tools were actually
+            # down). A downtime event still open right now (ended_at is
+            # NULL) is always in scope regardless of when it started, since
+            # the tool is down *right now*.
+            or_(EquipmentDowntimeEvent.started_at >= since, EquipmentDowntimeEvent.ended_at.is_(None)),
+        )
+        .order_by(EquipmentDowntimeEvent.started_at.desc())
+        .all()
+    )
+    return [
+        {
+            "equipment_id": r.equipment_id,
+            "reason": r.reason,
+            "started_at": r.started_at.isoformat(),
+            "ended_at": r.ended_at.isoformat() if r.ended_at else None,
+            "duration_seconds": r.duration_seconds,
+        }
+        for r in rows
+    ]
+
+
+def investigate_step_hold(
+    db: Session, process_step: str, window_seconds: float, now: datetime
+) -> InvestigationTask:
+    """Run one process-step HOLD investigation end to end (submitted ->
+    working -> completed/failed) and return the row.
+
+    Unlike the two single-equipment investigations above,
+    rule:production-hold's proposals carry no equipment_id — a whole step,
+    not one tool, is stuck (advance_lot only HOLDs a lot once every tool on
+    its step is DOWN, see app/production_agent.py) — so this first resolves
+    every tool currently assigned to `process_step` and pools their
+    downtime events rather than one tool's history. `window_seconds` is the
+    exact HOLD wait the triggering proposal measured, passed in by the
+    caller rather than a fixed constant, so the artifact's downtime count
+    always matches the span of time the proposal is actually about (the
+    same reasoning investigate_equipment_downtime already documents for its
+    own window_seconds argument).
+    """
+    task = InvestigationTask(
+        agent_id=PRODUCTION_AGENT_ID,
+        created_at=now,
+        updated_at=now,
+        state=InvestigationTaskState.SUBMITTED.value,
+        equipment_id=None,
+        equipment_name=process_step,
+        anomaly_log_id=None,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    task.state = InvestigationTaskState.WORKING.value
+    task.updated_at = now
+    db.commit()
+
+    try:
+        name_by_id = dict(
+            db.query(Equipment.id, Equipment.name).filter(Equipment.process_step == process_step).all()
+        )
+        downtime = _recent_downtime_for_equipment_ids(db, list(name_by_id), now, window_seconds)
+        for d in downtime:
+            d["equipment_name"] = name_by_id.get(d["equipment_id"])
+        by_equipment = Counter(d["equipment_name"] for d in downtime)
+        by_equipment_str = ", ".join(f"{n} {c}회" for n, c in by_equipment.most_common())
+        artifact = {
+            "name": "production-investigation-result",
+            "process_step": process_step,
+            "equipment_count": len(name_by_id),
+            "summary": (
+                f"{process_step} 정체 구간({window_seconds:.0f}초) 내 설비 다운 {len(downtime)}건"
+                + (f" ({by_equipment_str})" if by_equipment else "")
+            ),
+            "evidence": {
+                "window_seconds": window_seconds,
+                "down_count_in_window": len(downtime),
+                "by_equipment": dict(by_equipment),
+                "recent_downtime_events": downtime,
+            },
+        }
+        task.artifact_json = json.dumps(artifact)
+        task.state = InvestigationTaskState.COMPLETED.value
+    except Exception as exc:  # the production agent's own proposal must not depend on this
+        logger.warning("production investigation task %s failed: %s", task.id, exc)
         task.state = InvestigationTaskState.FAILED.value
         task.error = str(exc)
     task.updated_at = now

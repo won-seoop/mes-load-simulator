@@ -401,6 +401,41 @@ class SimulationEngine:
             logger.warning("equipment investigation skipped: %s", exc)
             return proposal
 
+    def _investigate_production_hold_proposal(
+        self, db: Session, proposal: control_tower.Proposal, now: datetime
+    ) -> control_tower.Proposal:
+        """A2A-style investigation task (see app/a2a.py) for one
+        rule:production-hold proposal: runs only when this process step has
+        no investigation task within the same suppression window already (a
+        standing step-wide HOLD must not spawn a new task every 30-second
+        check cycle while it persists). A failed or skipped investigation
+        must never block the production agent's own proposal, which does
+        not depend on it."""
+        if proposal.equipment_name is None or proposal.window_seconds is None:
+            return proposal
+        try:
+            suppress_since = now - timedelta(seconds=ANOMALY_LOG_SUPPRESS_SECONDS)
+            recent_task = (
+                db.query(InvestigationTask)
+                .filter(
+                    InvestigationTask.agent_id == a2a.PRODUCTION_AGENT_ID,
+                    InvestigationTask.equipment_id.is_(None),
+                    InvestigationTask.equipment_name == proposal.equipment_name,
+                    InvestigationTask.created_at >= suppress_since,
+                )
+                .order_by(InvestigationTask.id.desc())
+                .first()
+            )
+            if recent_task is not None:
+                task_id = recent_task.id
+            else:
+                task = a2a.investigate_step_hold(db, proposal.equipment_name, proposal.window_seconds, now)
+                task_id = task.id
+            return replace(proposal, evidence=f"{proposal.evidence} · A2A Task #{task_id}")
+        except Exception as exc:
+            logger.warning("production investigation skipped: %s", exc)
+            return proposal
+
     def _propose_actions(self, db: Session, anomalies, now: datetime) -> None:
         """Agents only propose; the control tower merges, gates and queues. A
         standing condition folds into one approval row rather than one per cycle."""
@@ -410,7 +445,10 @@ class SimulationEngine:
             for p in equipment_agent.propose_from_downtime(db, now)
         ]
         proposals += equipment_agent.propose_from_concurrent_downs(db, now)
-        proposals += production_agent.propose_from_step_hold_wait(db, now)
+        proposals += [
+            self._investigate_production_hold_proposal(db, p, now)
+            for p in production_agent.propose_from_step_hold_wait(db, now)
+        ]
         try:
             proposals += llm_agent.propose(db, llm_agent.get_client("root-cause"), proposals, now)
         except Exception as exc:  # the rule-based baseline must survive any LLM-side failure

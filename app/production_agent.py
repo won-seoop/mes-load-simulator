@@ -87,6 +87,7 @@ def propose_from_step_hold_wait(db: Session, now: datetime) -> list[Proposal]:
                 risk_level=risk,
                 action_kind="INSPECT_EQUIPMENT",
                 dedupe_key=f"production-hold:{step}",
+                window_seconds=wait,
             )
         )
     return proposals
