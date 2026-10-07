@@ -698,6 +698,27 @@
       내부에서 Task 개념만 빌려 쓴 것, 2026-10-05/06과 동일). `GET /a2a/tasks`는 `equipment_id`로만
       필터하므로 생산 Task(항상 `equipment_id=null`)를 공정 스텝으로 좁혀 조회할 방법이 아직 없다.
 
+- [x] (2026-10-08) `GET /a2a/tasks`에 `process_step` 쿼리 파라미터를 추가했다 — 바로 위
+      2026-10-07 엔트리에 남긴 한계이자 HITL 진행 현황 DB의 "2 규칙 에이전트" 행에 적힌 다음
+      할 일이었다. `rule:production-hold`의 Task(`investigate_step_hold`)는 공정 스텝 전체가
+      멈춘 것이라 `equipment_id=null`이고 공정 스텝 이름이 `equipment_name`에 들어가므로, 기존의
+      `equipment_id` 필터로는 좁혀 조회할 수 없었다. `process_step` 파라미터는
+      `equipment_id IS NULL AND equipment_name = process_step` 조건으로 매칭한다. 설계 결정:
+      `equipment_id`와 `process_step`을 동시에 넘기면 두 조건을 AND로 합쳐 항상 빈 결과를 조용히
+      돌려주는 대신 422로 명시적으로 거부한다 — 어떤 Task 행도 특정 설비를 가지면서 동시에
+      `equipment_id=null`일 수 없으므로 "둘 다 지정"은 항상 사용자 실수이기 때문이다. `agent_gateway`
+      MCP Tool `get_investigation_tasks`와 README도 같은 파라미터로 맞췄다. 신규 pytest 2개
+      (`process_step`으로 생산 Task만 걸러지는지, 두 파라미터를 함께 주면 422인지) 포함 전체
+      220 -> 222개 통과. 격리 포트(18810)에 실제 uvicorn 서버를 띄워 `curl`로 필터 없음/
+      `process_step=ETCH`/`equipment_id`+`process_step` 동시 지정(422) 세 가지를 직접 확인했고,
+      `.venv-mcp`의 `agent_gateway.smoke_test`에 `process_step="ETCH"` 호출을 추가해 통과시켰다.
+      (실제 production Task 행으로 end-to-end 필터링까지 확인하려면 ETCH 설비 3대를 전부 DOWN시켜
+      HOLD를 유발해야 하는데, 수동 PATCH로 설비를 DOWN시켜도 시뮬레이션 틱이 자체 Fault 모델에
+      따라 금방 RUN으로 되돌려 격리 서버에서는 재현하지 못했다 — 이 메커니즘 자체는 2026-10-07에
+      이미 실제로 검증됐으므로, 오늘은 유닛 테스트 + 실제 서버에 대한 파라미터/검증 동작 확인으로
+      충분하다고 판단했다.) 50 VU/3분 파이프라인 재확인(요청 15,498건, 실패율 0.00%, RPS 86.32,
+      p95 190ms/p99 460ms, Server 5xx/IntegrityError 0, 예상 409 충돌 90건).
+
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
 - [x] (2026-10-06 완료) ~~agent_gateway 전용 가상환경 분리~~ → `.venv-mcp/`를 실제로 만들어
@@ -798,11 +819,9 @@
       Gateway로만 조회 가능하다(품질 조사 Task도 2026-10-05부터 같은 상태). 두 에이전트의
       Task/Artifact를 설비 상세 드릴다운 드로어나 승인 큐 카드에 "조사 근거 보기"로 보여줄
       가치가 있는지 판단. 생산 조사 Task(2026-10-07)도 같은 한계다.
-- [ ] `GET /a2a/tasks`는 `equipment_id`로만 필터할 수 있어 생산 조사 Task(항상
-      `equipment_id=null`, `equipment_name`에 공정 스텝 이름만 들어 있음)를 스텝 단위로 좁혀
-      조회할 방법이 없다(2026-10-07 한계로 남김) — `process_step` 쿼리 파라미터를
-      `equipment_name` 매칭으로 추가할 가치가 있는지 판단. 세 에이전트 모두 모였으니 이번에
-      API 필터링 방식 자체를 한 번에 재검토하는 것이 개별로 계속 늘리는 것보다 나을 수 있다.
+- [x] (2026-10-08 완료) ~~`GET /a2a/tasks`는 `equipment_id`로만 필터할 수 있어 생산 조사
+      Task를 스텝 단위로 좁혀 조회할 방법이 없는 문제~~ → `process_step` 쿼리 파라미터 추가.
+      아래 완료 섹션 참고.
 - [ ] 오늘(2026-10-07) `app/a2a.py`의 다운타임 조회 두 함수에서 "조사 Window가 정확히 그 제안이
       측정한 구간과 같을 때, 원인이 되는 다운타임이 그 구간 시작 직전에 시작해 경계에서 잘려나갈
       수 있다"는 버그를 발견·수정했다(`ended_at IS NULL`이면 시작 시각과 무관하게 항상 포함).
@@ -812,6 +831,15 @@
       판단했지만, 실제로 재현된 적은 없다. 세 조사 모두에 대해 "닫힌 다운타임 중 경계 몇 ms
       차이로 빠진 사례가 과거 Task에 있었는지"를 `artifact_json`을 다시 읽어 감사할 가치가
       있는지 다음에 판단한다.
+- [ ] 2026-10-08에 `process_step` 필터를 실제 설비 다운으로 end-to-end 확인하려다 겪은 제약:
+      시뮬레이션이 켜져 있는 상태에서 `PATCH /equipment/{id}`로 설비를 수동 DOWN시켜도, 그
+      설비를 직접 추적하지 않는 시뮬레이션 틱의 자체 Fault 모델이 몇 초 안에 다시 RUN으로
+      되돌린다(수동 PATCH가 `EquipmentDowntimeEvent`를 만들지 않아 시뮬레이션이 "이것도 내가
+      추적해야 할 다운타임"으로 인식하지 못하는 것으로 추정 — 코드까지 추적해 확정하지는 않음).
+      이미 있는 `inject_defect_bias`/`fault_rate_override` 패턴처럼, 디버그·시연용으로 특정
+      설비를 일정 시간 "강제 DOWN 유지"하는 주입 엔드포인트를 추가하면 다음에 같은 종류의 수동
+      재현(오늘처럼 설비 전체를 DOWN시켜 생산 조사 Task를 직접 만들어보는 것)이 쉬워질 가치가
+      있는지 판단한다.
 
 ## 에이전트 작업 원칙
 
