@@ -155,16 +155,31 @@ def get_agent_cards() -> list[dict]:
 
 
 @mcp.tool()
-def get_investigation_tasks(equipment_id: int | None = None, limit: int = 20) -> list[dict]:
-    """A2A-style investigation tasks the quality and equipment agents created
-    (most recent first, distinguishable by the `agent_id` field). A completed
-    quality-investigation-agent task's Artifact carries defect rate vs peers,
-    z-score and recent downtime; a completed equipment-investigation-agent
-    task's Artifact carries the DOWN count and reasons in the detection
-    window that triggered it."""
+def get_investigation_tasks(
+    equipment_id: int | None = None, process_step: str | None = None, limit: int = 20
+) -> list[dict]:
+    """A2A-style investigation tasks the quality, equipment and production
+    agents created (most recent first, distinguishable by the `agent_id`
+    field). A completed quality-investigation-agent task's Artifact carries
+    defect rate vs peers, z-score and recent downtime; a completed
+    equipment-investigation-agent task's Artifact carries the DOWN count and
+    reasons in the detection window that triggered it; a completed
+    production-investigation-agent task's Artifact pools downtime across
+    every tool on the stuck process step.
+
+    `equipment_id` and `process_step` are mutually exclusive: the
+    production agent's tasks have no single equipment_id (a whole step is
+    stuck, not one tool), so they can only be narrowed by `process_step`
+    (e.g. "ETCH"), never by `equipment_id`."""
     if limit < 1 or limit > 100:
         raise ValueError("limit must be between 1 and 100")
-    query = [] if equipment_id is None else [f"equipment_id={int(equipment_id)}"]
+    if equipment_id is not None and process_step is not None:
+        raise ValueError("equipment_id and process_step are mutually exclusive")
+    query = []
+    if equipment_id is not None:
+        query.append(f"equipment_id={int(equipment_id)}")
+    elif process_step is not None:
+        query.append(f"process_step={quote(process_step)}")
     query.append(f"limit={limit}")
     return _get(f"/a2a/tasks?{'&'.join(query)}")
 

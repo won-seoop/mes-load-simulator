@@ -68,6 +68,11 @@ async def main() -> None:
         investigation_tasks_result = await client.call_tool("get_investigation_tasks", {})
         assert not investigation_tasks_result.is_error
 
+        investigation_tasks_by_step_result = await client.call_tool(
+            "get_investigation_tasks", {"process_step": "ETCH"}
+        )
+        assert not investigation_tasks_by_step_result.is_error
+
         print(
             {
                 "tools": sorted(tool_names),

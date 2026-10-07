@@ -130,6 +130,27 @@ def test_a2a_tasks_endpoint_filters_by_equipment(client, db):
     assert rows[0]["equipment_id"] == 2
 
 
+def test_a2a_tasks_endpoint_filters_by_process_step(client, db):
+    a2a.investigate_quality_anomaly(db, _anomaly(equipment_id=1), anomaly_log_id=None, now=T0)
+    a2a.investigate_step_hold(db, "ETCH", window_seconds=10.0, now=T0)
+    a2a.investigate_step_hold(db, "CVD", window_seconds=10.0, now=T0)
+
+    response = client.get("/a2a/tasks", params={"process_step": "ETCH"})
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    assert rows[0]["equipment_id"] is None
+    assert rows[0]["equipment_name"] == "ETCH"
+    assert rows[0]["agent_id"] == a2a.PRODUCTION_AGENT_ID
+
+
+def test_a2a_tasks_endpoint_rejects_equipment_id_and_process_step_together(client, db):
+    response = client.get("/a2a/tasks", params={"equipment_id": 1, "process_step": "ETCH"})
+
+    assert response.status_code == 422
+
+
 def test_a2a_task_detail_404_when_missing(client):
     response = client.get("/a2a/tasks/9999")
 

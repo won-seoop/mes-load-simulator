@@ -1458,15 +1458,38 @@ def _investigation_task_out(t: InvestigationTask) -> dict:
 
 @app.get("/a2a/tasks")
 def list_investigation_tasks(
-    equipment_id: Optional[int] = None, limit: int = 100, db: Session = Depends(get_db)
+    equipment_id: Optional[int] = None,
+    process_step: Optional[str] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db),
 ):
-    """A2A-style investigation tasks created by the quality agent (see
-    app/a2a.py), most recent first. Read-only; nothing here executes an
-    action — a completed task's artifact only adds evidence to the proposal
-    that already goes through control_tower -> approval queue."""
+    """A2A-style investigation tasks created by the quality, equipment and
+    production agents (see app/a2a.py), most recent first. Read-only;
+    nothing here executes an action — a completed task's artifact only adds
+    evidence to the proposal that already goes through control_tower ->
+    approval queue.
+
+    `equipment_id` narrows to one tool's tasks (quality/equipment agent
+    rows). `process_step` narrows to one process step's tasks instead: the
+    production agent's rows always carry `equipment_id=None` with
+    `equipment_name` set to the process step (e.g. "ETCH"), since its
+    proposals are about a whole step with no single equipment_id to filter
+    on (app/a2a.py:investigate_step_hold). Passing both is rejected rather
+    than silently ANDed into an always-empty result, since no task row can
+    match a specific equipment_id and also have equipment_id=None."""
+    if equipment_id is not None and process_step is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="equipment_id and process_step are mutually exclusive filters",
+        )
     query = db.query(InvestigationTask)
     if equipment_id is not None:
         query = query.filter(InvestigationTask.equipment_id == equipment_id)
+    elif process_step is not None:
+        query = query.filter(
+            InvestigationTask.equipment_id.is_(None),
+            InvestigationTask.equipment_name == process_step,
+        )
     rows = query.order_by(InvestigationTask.id.desc()).limit(min(limit, 500)).all()
     return [_investigation_task_out(t) for t in rows]
 
