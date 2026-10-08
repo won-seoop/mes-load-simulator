@@ -590,6 +590,7 @@ document.getElementById("nav-search").addEventListener("input", e => {
 
 let selectedLotId = null;
 let selectedEquipmentId = null;
+let selectedInvestigationTaskId = null;
 
 async function getJSON(path, options) {
   const res = await fetch(path, { cache: "no-store", ...options });
@@ -874,6 +875,7 @@ document.getElementById("lot-filter").addEventListener("change", () => tick());
 
 async function openLotDrawer(lotId) {
   selectedEquipmentId = null;
+  selectedInvestigationTaskId = null;
   selectedLotId = lotId;
   await renderLotDrawer();
 }
@@ -918,6 +920,7 @@ async function renderLotDrawer() {
 /* ---------------- equipment drawer ---------------- */
 async function openEquipmentDrawer(equipmentId) {
   selectedLotId = null;
+  selectedInvestigationTaskId = null;
   selectedEquipmentId = equipmentId;
   await renderEquipmentDrawer();
 }
@@ -970,6 +973,98 @@ async function renderEquipmentDrawer() {
       </div>
       <h3 style="font-size:.85rem;">설비 로그 (최근 100건, 공정 진행 + 품질검사)</h3>
       <div class="timeline">${timeline}</div>
+    </div>
+  `;
+}
+
+/* ---------------- A2A investigation task drawer ("조사 근거 보기") ----------------
+   Opened from an approval card whose evidence cites "A2A Task #<id>"
+   (app/a2a.py). A completed task's artifact never changes afterwards, so
+   unlike the lot/equipment drawers this one does not need to be correct
+   mid-investigation -- it is fetched once on open and left alone. */
+const AP_TASK_RE = /A2A Task #(\d+)/;
+function approvalTaskId(evidence) {
+  const m = AP_TASK_RE.exec(evidence || "");
+  return m ? Number(m[1]) : null;
+}
+
+async function openInvestigationDrawer(taskId) {
+  selectedLotId = null;
+  selectedEquipmentId = null;
+  selectedInvestigationTaskId = taskId;
+  await renderInvestigationDrawer();
+}
+
+function closeInvestigationDrawer() {
+  selectedInvestigationTaskId = null;
+  document.getElementById("drawer-root").innerHTML = "";
+}
+
+// Evidence values vary by agent (numbers, severities, or a list of
+// downtime events) -- app/a2a.py's three investigate_*() functions all
+// shape `evidence` as a flat dict, but a value can itself be a list of
+// dicts (recent_downtime_events) or a dict (by_reason/by_equipment
+// counts), so render each shape instead of assuming scalars only.
+function renderEvidenceValue(v) {
+  if (v === null || v === undefined) return "-";
+  if (Array.isArray(v)) {
+    if (!v.length) return "없음";
+    // recent_downtime_events (all three investigate_*() functions in
+    // app/a2a.py shape it the same way): a wide 3-4 column table does not
+    // fit the drawer's 420px width (verified with Playwright -- the table
+    // forced its own horizontal scrollbar inside the drawer), so render it
+    // as one compact line per event instead of a generic table.
+    if ("started_at" in v[0]) {
+      return v.map(ev => {
+        const start = new Date(ev.started_at).toLocaleString("ko-KR");
+        const end = ev.ended_at ? new Date(ev.ended_at).toLocaleString("ko-KR") : "진행 중";
+        const dur = ev.duration_seconds != null ? fmtDuration(ev.duration_seconds) : "-";
+        const who = ev.equipment_name ? `${escapeHtml(ev.equipment_name)} · ` : "";
+        return `<div>${who}${escapeHtml(ev.reason)} · ${start} → ${end} (${dur})</div>`;
+      }).join("");
+    }
+    const cols = Object.keys(v[0]);
+    return `<div style="overflow-x:auto;"><table>
+      <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
+      <tbody>${v.map(row => `<tr>${cols.map(c => `<td>${escapeHtml(row[c] ?? "-")}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div>`;
+  }
+  if (typeof v === "object") {
+    const entries = Object.entries(v);
+    return entries.length ? entries.map(([k, val]) => `${escapeHtml(k)}: ${escapeHtml(val)}`).join(", ") : "없음";
+  }
+  if (typeof v === "number") return String(Math.round(v * 1000) / 1000);
+  return escapeHtml(v);
+}
+
+async function renderInvestigationDrawer() {
+  if (!selectedInvestigationTaskId) return;
+  let task;
+  try {
+    task = await getJSON(`/a2a/tasks/${selectedInvestigationTaskId}`);
+  } catch (err) {
+    closeInvestigationDrawer();
+    return;
+  }
+  const art = task.artifact;
+  const evidenceRows = art && art.evidence
+    ? Object.entries(art.evidence).map(([k, v]) => `
+        <div class="timeline-item">
+          <div class="t">${escapeHtml(k)}</div>
+          <div class="e" style="font-weight:400;">${renderEvidenceValue(v)}</div>
+        </div>`).join("")
+    : `<div class="empty">근거 데이터 없음</div>`;
+
+  document.getElementById("drawer-root").innerHTML = `
+    <div class="drawer-overlay" onclick="closeInvestigationDrawer()"></div>
+    <div class="drawer">
+      <button class="close" onclick="closeInvestigationDrawer()">✕</button>
+      <h3>조사 근거 — A2A Task #${task.id}</h3>
+      <div class="page-desc">${escapeHtml(task.agent_id)} · ${escapeHtml(task.state)}${task.equipment_name ? " · " + escapeHtml(task.equipment_name) : ""}</div>
+      ${art ? `<div class="ap-row" style="margin-top:12px;"><b>요약</b>${escapeHtml(art.summary)}</div>` : ""}
+      ${task.error ? `<div class="ap-row"><b>에러</b>${escapeHtml(task.error)}</div>` : ""}
+      <h3 style="margin-top:16px;font-size:.85rem;">근거 상세</h3>
+      <div class="timeline">${evidenceRows}</div>
     </div>
   `;
 }
@@ -1186,8 +1281,14 @@ function approvalPendingCard(r) {
       <button class="btn good" data-apdo="approve" data-id="${r.id}">승인</button>
       <button class="btn bad" data-apdo="reject" data-id="${r.id}">반려</button>
       <button class="btn" data-apdo="edit" data-id="${r.id}">수정</button>
+      ${investigateButton(r.evidence)}
     </div>`}
   </div>`;
+}
+
+function investigateButton(evidence) {
+  const taskId = approvalTaskId(evidence);
+  return taskId != null ? `<button class="btn" data-investigate="${taskId}">조사 근거 보기</button>` : "";
 }
 
 function approvalDecidedCard(r) {
@@ -1203,6 +1304,7 @@ function approvalDecidedCard(r) {
     ${r.edited_proposal ? `<div class="ap-row"><b>수정본</b>${escapeHtml(r.edited_proposal)}</div>` : ""}
     ${r.decision_reason ? `<div class="ap-row"><b>사유</b>${escapeHtml(r.decision_reason)}</div>` : ""}
     <div class="ap-meta">${escapeHtml(r.decided_by || "-")} · ${r.decided_at ? parseUtc(r.decided_at).toLocaleString("ko-KR") : "-"}</div>
+    ${investigateButton(r.evidence) ? `<div class="ap-actions">${investigateButton(r.evidence)}</div>` : ""}
   </div>`;
 }
 
@@ -1222,6 +1324,8 @@ document.addEventListener("click", e => {
   const redraw = () => lastApprovalData && renderApprovals(lastApprovalData.rows, lastApprovalData.summary, true);
   const tab = e.target.closest("[data-aptab]");
   if (tab) { approvalTab = tab.dataset.aptab; approvalOpenForm = null; redraw(); return; }
+  const investigate = e.target.closest("[data-investigate]");
+  if (investigate) { openInvestigationDrawer(Number(investigate.dataset.investigate)); return; }
   const btn = e.target.closest("[data-apdo]");
   if (!btn) return;
   const id = Number(btn.dataset.id);
@@ -1272,6 +1376,7 @@ async function tick() {
     renderAuditLog(auditLog);
     if (selectedLotId) await renderLotDrawer();
     if (selectedEquipmentId) await renderEquipmentDrawer();
+    if (selectedInvestigationTaskId) await renderInvestigationDrawer();
     document.getElementById("conn-dot").title = "연결됨 · " + new Date().toLocaleTimeString("ko-KR");
     document.getElementById("conn-dot").classList.remove("off");
   } catch (err) {
