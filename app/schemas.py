@@ -305,6 +305,7 @@ class ControlTowerDecisionOut(BaseModel):
     contributing_agents: list[str]
     risk_level: str
     approval_id: Optional[int]
+    latest_task_id: Optional[int] = None
 
     @field_validator("contributing_agents", mode="before")
     @classmethod

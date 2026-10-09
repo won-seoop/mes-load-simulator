@@ -419,3 +419,55 @@ def artifact_of(task: InvestigationTask) -> Optional[dict]:
     if not task.artifact_json:
         return None
     return json.loads(task.artifact_json)
+
+
+def latest_task_ids(
+    db: Session, keys: list[tuple[Optional[int], Optional[str], datetime]]
+) -> list[Optional[int]]:
+    """Batch-resolve, for each (equipment_id, equipment_name, cutoff) key, the
+    most recent InvestigationTask created at or before `cutoff` that matches
+    it -- in one pair of queries rather than one query per key.
+
+    Used by GET /control-tower/decisions to offer "조사 근거 보기" even on
+    AUTO_RECORD rows, which carry no evidence string at all (they never reach
+    the approval queue, see app/control_tower.py's QUEUE_MIN_RISK gate) and so
+    have nothing for the dashboard's existing `A2A Task #<id>` regex
+    (app/static/index.html) to find. `equipment_id=None` pairs with
+    `equipment_name` as the process step instead (rule:production-hold's
+    rows, see investigate_step_hold) -- the same two-shape matching
+    simulation.py already uses for its own suppression-window lookups.
+
+    `cutoff` keeps a decision from linking to a task created after it (e.g. a
+    later, unrelated anomaly on the same equipment); without it, an old
+    decision further down a long list could point at the wrong task.
+    """
+    equipment_ids = {eid for eid, _, _ in keys if eid is not None}
+    step_names = {name for eid, name, _ in keys if eid is None and name is not None}
+    by_equipment: dict[int, list[InvestigationTask]] = {}
+    by_step: dict[str, list[InvestigationTask]] = {}
+    if equipment_ids:
+        for t in (
+            db.query(InvestigationTask)
+            .filter(InvestigationTask.equipment_id.in_(equipment_ids))
+            .order_by(InvestigationTask.id.desc())
+            .all()
+        ):
+            by_equipment.setdefault(t.equipment_id, []).append(t)
+    if step_names:
+        for t in (
+            db.query(InvestigationTask)
+            .filter(
+                InvestigationTask.equipment_id.is_(None),
+                InvestigationTask.equipment_name.in_(step_names),
+            )
+            .order_by(InvestigationTask.id.desc())
+            .all()
+        ):
+            by_step.setdefault(t.equipment_name, []).append(t)
+
+    result: list[Optional[int]] = []
+    for eid, name, cutoff in keys:
+        candidates = by_equipment.get(eid, []) if eid is not None else by_step.get(name, [])
+        match = next((t for t in candidates if t.created_at <= cutoff), None)
+        result.append(match.id if match else None)
+    return result

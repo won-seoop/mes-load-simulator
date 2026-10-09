@@ -191,6 +191,64 @@ def test_decisions_endpoint_is_empty_at_first_and_capped_at_100(client, db):
     assert len(client.get("/control-tower/decisions").json()) == 100
 
 
+def _task(equipment_id=None, equipment_name=None, created_at=T0, agent_id="quality-investigation-agent"):
+    return InvestigationTask(
+        agent_id=agent_id,
+        created_at=created_at,
+        updated_at=created_at,
+        state="completed",
+        equipment_id=equipment_id,
+        equipment_name=equipment_name,
+    )
+
+
+def test_latest_task_ids_resolves_the_newest_task_at_or_before_the_cutoff(db):
+    older = _task(equipment_id=1, created_at=T0)
+    newer = _task(equipment_id=1, created_at=T0 + timedelta(seconds=60))
+    db.add_all([older, newer])
+    db.commit()
+
+    assert a2a.latest_task_ids(db, [(1, None, T0 + timedelta(seconds=30))]) == [older.id]
+
+
+def test_latest_task_ids_does_not_link_a_task_created_after_the_cutoff(db):
+    db.add(_task(equipment_id=1, created_at=T0 + timedelta(seconds=60)))
+    db.commit()
+
+    assert a2a.latest_task_ids(db, [(1, None, T0)]) == [None]
+
+
+def test_latest_task_ids_matches_production_agent_rows_by_process_step(db):
+    etch_task = _task(
+        equipment_id=None, equipment_name="ETCH", created_at=T0, agent_id="production-investigation-agent"
+    )
+    db.add(etch_task)
+    db.commit()
+
+    keys = [(None, "ETCH", T0 + timedelta(seconds=10)), (None, "CVD", T0 + timedelta(seconds=10))]
+    assert a2a.latest_task_ids(db, keys) == [etch_task.id, None]
+
+
+def test_decisions_endpoint_exposes_latest_task_id_for_auto_record_rows(client, db):
+    task = _task(equipment_id=1, created_at=T0)
+    db.add(task)
+    db.commit()
+    ct.process(db, [_proposal(risk_level="LOW", equipment_id=1)], T0 + timedelta(seconds=5))
+
+    body = client.get("/control-tower/decisions").json()
+
+    assert body[0]["disposition"] == ct.AUTO_RECORD
+    assert body[0]["latest_task_id"] == task.id
+
+
+def test_decisions_endpoint_latest_task_id_is_none_without_a_matching_task(client, db):
+    ct.process(db, [_proposal(risk_level="LOW", equipment_id=1)], T0)
+
+    body = client.get("/control-tower/decisions").json()
+
+    assert body[0]["latest_task_id"] is None
+
+
 def test_equipment_agent_proposes_after_repeated_downs(client, db):
     eq = _equipment(client, "ETCH-01")
     _add_downs(db, eq["id"], 4)

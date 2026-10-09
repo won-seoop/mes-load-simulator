@@ -1249,6 +1249,7 @@ function towerDecisionCard(d) {
     </div>
     <div class="ap-row"><b>이유</b>${escapeHtml(d.reason)}</div>
     <div class="ap-meta">제안 에이전트: ${d.contributing_agents.map(escapeHtml).join(", ")} · ${parseUtc(d.decided_at).toLocaleString("ko-KR")}</div>
+    ${d.latest_task_id != null ? `<div class="ap-actions"><button class="btn" data-investigate="${d.latest_task_id}">조사 근거 보기</button></div>` : ""}
   </div>`;
 }
 

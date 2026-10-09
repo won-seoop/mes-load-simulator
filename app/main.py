@@ -1382,12 +1382,36 @@ def decide_approval(approval_id: int, body: ApprovalDecision, db: Session = Depe
 
 @app.get("/control-tower/decisions", response_model=list[ControlTowerDecisionOut])
 def list_control_tower_decisions(db: Session = Depends(get_db)):
-    return (
+    """Most recent control tower decisions, each with `latest_task_id` --
+    the A2A investigation task (app/a2a.py) that most plausibly backs it, so
+    the dashboard's "컨트롤타워 판단" tab can offer "조사 근거 보기" even on
+    AUTO_RECORD rows (which have no approval row, and so no evidence string
+    for the TOWER-tab's regex to find). Resolved in one batched query pair
+    (app.a2a.latest_task_ids), not one query per row."""
+    decisions = (
         db.query(ControlTowerDecision)
         .order_by(ControlTowerDecision.decided_at.desc(), ControlTowerDecision.id.desc())
         .limit(100)
         .all()
     )
+    task_ids = a2a.latest_task_ids(
+        db, [(d.equipment_id, d.equipment_name, d.decided_at) for d in decisions]
+    )
+    return [
+        {
+            "id": d.id,
+            "decided_at": d.decided_at,
+            "equipment_id": d.equipment_id,
+            "equipment_name": d.equipment_name,
+            "disposition": d.disposition,
+            "reason": d.reason,
+            "contributing_agents": d.contributing_agents,
+            "risk_level": d.risk_level,
+            "approval_id": d.approval_id,
+            "latest_task_id": task_id,
+        }
+        for d, task_id in zip(decisions, task_ids)
+    ]
 
 
 @app.get("/audit-log", response_model=list[AuditLogOut])

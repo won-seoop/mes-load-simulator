@@ -759,6 +759,14 @@
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
+- [ ] 2026-10-10에 컨트롤타워 판단 탭에 추가한 `app.a2a.latest_task_ids`(설비/공정 스텝 + cutoff로
+      가장 최근 조사 Task를 배치 조회)는 지금 `GET /control-tower/decisions` 한 곳에만 연결돼
+      있다. 같은 헬퍼를 설비 상세 드릴다운 드로어("이 설비 관련 조사 이력")와 "이상 이력" 화면
+      (과거 AnomalyLog 행에 연결된 조사 Task 표시)에도 연결하면 2026-10-09 Update부터 반복
+      언급된 두 남은 gap을 닫을 수 있다 — 다만 그 두 화면은 "그 시점 하나의 최신 Task"가 아니라
+      "그 설비/이상과 관련된 조사 이력 전체(복수)"를 보여줘야 더 유용하므로, `latest_task_ids`를
+      그대로 재사용하기보다 `equipment_id`별 Task 목록을 돌려주는 자매 함수가 필요한지 먼저
+      판단한다.
 - [x] (2026-10-06 완료) ~~agent_gateway 전용 가상환경 분리~~ → `.venv-mcp/`를 실제로 만들어
       `pip install -r agent_gateway/requirements.txt`로 `mcp[cli]`를 설치하고, 메인 `.venv`와
       완전히 분리된 상태로 smoke test와 신규 Tool 2개(`get_agent_cards` 호출 포함)를 모두
@@ -880,11 +888,48 @@
       설비를 일정 시간 "강제 DOWN 유지"하는 주입 엔드포인트를 추가하면 다음에 같은 종류의 수동
       재현(오늘처럼 설비 전체를 DOWN시켜 생산 조사 Task를 직접 만들어보는 것)이 쉬워질 가치가
       있는지 판단한다.
-- [ ] 2026-10-09에 승인 큐 카드에 "조사 근거 보기"를 추가하면서 확인한 새 gap: 컨트롤타워가
-      AUTO_RECORD(LOW 위험도)로 판정해 승인 요청을 만들지 않은 조사 Task는 승인 큐 "컨트롤타워
-      판단" 탭에도 `equipment_id`가 있으면 evidence 문자열 자체가 없어 "조사 근거 보기" 진입점이
-      없다 — `GET /a2a/tasks`를 설비/스텝별로 직접 호출해야만 보인다. `towerDecisionCard`에도
-      해당 설비의 최신 조사 Task가 있으면 같은 버튼을 붙이는 것이 다음 후보.
+- [x] (2026-10-10 완료) ~~2026-10-09에 승인 큐 카드에 "조사 근거 보기"를 추가하면서 확인한 gap:
+      컨트롤타워가 AUTO_RECORD(LOW 위험도)로 판정해 승인 요청을 만들지 않은 조사 Task는 승인 큐
+      어디에도 evidence 문자열이 없어 "조사 근거 보기" 진입점이 없던 문제~~ → `towerDecisionCard`
+      (컨트롤타워 판단 탭, AUTO_RECORD/BLOCK/QUEUE 전부)에도 같은 버튼을 추가했다. 접근 방식은
+      기존 PENDING/DECIDED 카드가 쓰던 evidence 문자열 정규식 파싱과 다르다 — `ControlTowerDecision`
+      테이블 자체에는 evidence/title 컬럼이 전혀 없어(`equipment_id`/`equipment_name`/`reason`만
+      저장, app/control_tower.py) AUTO_RECORD 행은 애초에 파싱할 문자열이 없기 때문이다. 대신
+      `app.a2a.latest_task_ids(db, keys)`를 새로 추가해, `(equipment_id, equipment_name, cutoff)`
+      키마다 "그 설비(또는 생산 에이전트처럼 equipment_id가 없으면 공정 스텝 `equipment_name`)의,
+      `cutoff`(=decided_at) 시각 이전에 생성된 가장 최근 InvestigationTask" id를 직접 조회해
+      `GET /control-tower/decisions`가 `latest_task_id` 필드로 내려주게 했다.
+
+      설계 결정 두 가지: (1) 결정 건당 쿼리 1회(N+1)가 아니라 전체 decisions의 equipment_id
+      집합과 process-step 집합 각각 1회씩, 총 2회 쿼리로 배치 처리한다 — 2026-09-25에 `GET
+      /equipment`에서 겪은 것과 같은 유형의 N+1 회귀를 이 폴링 전용(4초 간격) 엔드포인트에
+      새로 들여오지 않기 위함이다. (2) `cutoff`로 `decided_at` 이전 Task만 매칭한다 — cutoff
+      없이 그냥 "그 설비의 가장 최근 Task"를 썼다면, 목록에 오래 남아있는 과거 AUTO_RECORD
+      행이 그 이후 같은 설비에 발생한 무관한 최신 조사와 잘못 연결될 수 있었다.
+
+      검증: 신규 pytest 5개(222→227 — `latest_task_ids`의 cutoff 전후 경계 2건, 공정 스텝 매칭
+      1건, 엔드포인트 통합 2건) 전체 통과. 격리 서버(포트 18950)에 ETCH 설비 1대를 3회
+      DOWN/IDLE시켜(4회가 아닌 3회라 MEDIUM이 아닌 LOW/AUTO_RECORD) 실시간으로 `GET
+      /control-tower/decisions`가
+      `approval_id: null`인 행에 `latest_task_id: 1`을 정확히 채우는 것을 확인했고(해당 Task는
+      실제로 그 3회 DOWN을 모은 Artifact를 갖고 있었다), Playwright로 컨트롤타워 판단 탭에서
+      버튼 클릭 → 드로어가 올바른 Task #1을 열고 닫히는 것, 1280px·390px 두 뷰포트 모두 페이지와
+      드로어 내부 모두 가로 스크롤 없음을 확인했다(기존 /favicon.ico 404 외 콘솔/네트워크 에러
+      없음). 50 VU/3분 파이프라인 재확인(요청 14,850건, 실패율 0.00%, RPS 82.70, p95 250ms/
+      p99 590ms, Server 5xx/IntegrityError 0, 예상 409 충돌 102건) — p95/p99가 최근 기준선보다
+      다소 높은데, 이 실행 직전 같은 세션에서 격리 서버·Playwright 검증을 여러 차례 띄운 뒤라
+      PAR-013/018/2026-10-09와 같은 유형의 공유 컨테이너 CPU 경합으로 추정하며 코드 회귀 근거는
+      없다. INSPECT-03이 오늘 처음 CRITICAL로 분류됐다(불량률 31.48% vs 피어 0%, n=54,
+      `rate_delta>=0.30` 임계값을 근소하게 넘김) — 2026-09-22 Notion '12. Quality Anomaly Log'에
+      이미 기록된 대로 이는 `load_test/locustfile.py`의 의도된 결정론적 Fault Injection(약
+      25%가 실패하도록 설계)이 내는 자연스러운 표본 변동 범위(약 20~30%) 안이라 새 이상으로
+      기록하지 않았다.
+
+      한계: 설비 상세 드릴다운 드로어와 "이상 이력" 화면에서의 조사 연결은 여전히 없다(아래
+      새 항목 참고). `latest_task_id`는 "그 결정 시점 이전 가장 최근" 매칭일 뿐, 그 결정을
+      실제로 유발한 조사라는 보장은 아니다 — 같은 설비에 대한 두 조사 Task가 억제 창(5분) 안에서
+      합쳐지지 않고 모두 결정 이전에 생성된 드문 경우, 더 최근 것이 선택된다(그 둘의 조사
+      결과가 거의 항상 같은 조건을 설명하므로 실질적으로는 문제되지 않는다고 판단).
 
 ## 에이전트 작업 원칙
 
