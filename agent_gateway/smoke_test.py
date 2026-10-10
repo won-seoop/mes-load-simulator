@@ -73,6 +73,14 @@ async def main() -> None:
         )
         assert not investigation_tasks_by_step_result.is_error
 
+        investigation_tasks_by_anomaly_result = await client.call_tool(
+            "get_investigation_tasks", {"anomaly_log_id": 1}
+        )
+        assert not investigation_tasks_by_anomaly_result.is_error
+
+        anomaly_log_result = await client.call_tool("get_anomaly_log", {})
+        assert not anomaly_log_result.is_error
+
         print(
             {
                 "tools": sorted(tool_names),

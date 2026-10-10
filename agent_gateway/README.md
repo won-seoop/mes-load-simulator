@@ -13,7 +13,8 @@ MCP는 Agent 간 작업 위임 프로토콜이 아니라, Host가 MES 데이터�
 - Tool `list_work_orders`: 최근 작업지시 조회
 - Tool `get_equipment_status`: 설비 전체 상태·OEE 입력값(Availability/Performance)·MTBF/MTTR
 - Tool `get_equipment_downtime`: 설비 1대의 다운타임 이력(Open/Closed, 최신순)
-- Tool `get_anomaly_log`: 이상탐지가 처음 발견된 시점까지 남는 영구 이력(`get_quality_anomalies`와 달리 저장됨)
+- Tool `get_anomaly_log`: 이상탐지가 처음 발견된 시점까지 남는 영구 이력(`get_quality_anomalies`와 달리 저장됨).
+  각 행의 `investigation_task_id`로 그 이상을 조사한 A2A Task를 바로 찾을 수 있다
 - Tool `get_approval_queue`: Human-in-the-Loop 승인 큐 조회(status로 PENDING/APPROVED/REJECTED/EXPIRED 필터)
 - Tool `get_approval_summary`: 승인 큐 상태별·위험도별 집계
 - Tool `get_control_tower_decisions`: 컨트롤타워의 BLOCK/AUTO_RECORD/QUEUE 판정 이력(병합 근거 포함)
@@ -23,8 +24,8 @@ MCP는 Agent 간 작업 위임 프로토콜이 아니라, Host가 MES 데이터�
   하위 호환용으로 유지 — 모든 등록 에이전트를 보려면 `get_agent_cards` 사용
 - Tool `get_agent_cards`: 등록된 모든 조사 에이전트(품질·설비·생산 공정 스텝 정체)의 AgentCard 목록
 - Tool `get_investigation_tasks`: 품질·설비·생산 조사 에이전트가 만든 A2A 스타일 Task 목록(`agent_id`로 구분,
-  equipment_id 또는 process_step으로 필터 — 생산 에이전트 Task는 `equipment_id=None`이라 공정 스텝
-  이름으로만 좁혀진다. 둘을 동시에 넘기면 422)
+  equipment_id/process_step/anomaly_log_id로 필터 — 생산 에이전트 Task는 `equipment_id=None`이라 공정 스텝
+  이름으로만 좁혀진다. 두 개 이상을 동시에 넘기면 422)
 - Tool `get_investigation_task`: Task 1건의 상태와 Artifact(불량률/다운타임 근거 등 구조화된 조사 결과)
 
 현재 단계는 의도적으로 read-only다. 작업지시 Release, 설비 상태 변경, Scrap/Rework 같은 생산 Command를

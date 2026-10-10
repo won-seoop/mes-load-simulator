@@ -421,6 +421,33 @@ def artifact_of(task: InvestigationTask) -> Optional[dict]:
     return json.loads(task.artifact_json)
 
 
+def task_ids_by_anomaly_log(db: Session, anomaly_log_ids: list[int]) -> dict[int, int]:
+    """Batch-resolve each AnomalyLog row's own InvestigationTask id, keyed by
+    anomaly_log_id, in one query rather than one query per row.
+
+    Unlike latest_task_ids above, this is not a "most recent before a
+    cutoff" heuristic -- investigate_quality_anomaly() is called at most
+    once per AnomalyLog row, passing that row's own id as anomaly_log_id
+    (simulation.py's _maybe_check_anomalies writes the log row, then
+    investigates, in that order), so the relationship is a direct foreign
+    key, not an inference. Used by GET /quality/anomaly-log so the
+    dashboard's "이상 이력" page can offer "조사 근거 보기" per row without
+    an extra round trip per row.
+    """
+    if not anomaly_log_ids:
+        return {}
+    rows = (
+        db.query(InvestigationTask)
+        .filter(InvestigationTask.anomaly_log_id.in_(anomaly_log_ids))
+        .order_by(InvestigationTask.id.desc())
+        .all()
+    )
+    result: dict[int, int] = {}
+    for t in rows:
+        result.setdefault(t.anomaly_log_id, t.id)
+    return result
+
+
 def latest_task_ids(
     db: Session, keys: list[tuple[Optional[int], Optional[str], datetime]]
 ) -> list[Optional[int]]:

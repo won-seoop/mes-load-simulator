@@ -932,14 +932,16 @@ function closeEquipmentDrawer() {
 
 async function renderEquipmentDrawer() {
   if (!selectedEquipmentId) return;
-  let eq, events;
+  let eq, events, tasks;
   try {
-    const [allEquipment, eventList] = await Promise.all([
+    const [allEquipment, eventList, taskList] = await Promise.all([
       getJSON("/equipment"),
       getJSON(`/equipment/${selectedEquipmentId}/events`),
+      getJSON(`/a2a/tasks?equipment_id=${selectedEquipmentId}`),
     ]);
     eq = allEquipment.find(e => e.id === selectedEquipmentId);
     events = eventList;
+    tasks = taskList;
     if (!eq) throw new Error("equipment not found");
   } catch (err) {
     closeEquipmentDrawer();
@@ -953,6 +955,20 @@ async function renderEquipmentDrawer() {
       <div>${ev.from_status ?? "—"} → ${ev.to_status}</div>
     </div>
   `).join("") || `<div class="empty">기록된 로그 없음</div>`;
+
+  // Lists every task (quality- or equipment-investigation-agent) this tool
+  // has ever been the subject of, not just the latest -- the control-tower
+  // tab's "조사 근거 보기" button only resolves one (the task nearest a
+  // given decision's decided_at, app.a2a.latest_task_ids); this reuses the
+  // existing GET /a2a/tasks?equipment_id= filter instead, which already
+  // returns the full history, so no new backend query was needed here.
+  const investigationHistory = tasks.map(t => `
+    <div class="timeline-item">
+      <div class="t">${new Date(t.created_at).toLocaleString("ko-KR")} · ${t.agent_id}</div>
+      <div class="e">${escapeHtml(t.artifact ? t.artifact.summary : t.state)}</div>
+      ${investigateButtonForTaskId(t.id)}
+    </div>
+  `).join("") || `<div class="empty">기록된 조사 없음</div>`;
 
   document.getElementById("drawer-root").innerHTML = `
     <div class="drawer-overlay" onclick="closeEquipmentDrawer()"></div>
@@ -973,6 +989,8 @@ async function renderEquipmentDrawer() {
       </div>
       <h3 style="font-size:.85rem;">설비 로그 (최근 100건, 공정 진행 + 품질검사)</h3>
       <div class="timeline">${timeline}</div>
+      <h3 style="font-size:.85rem; margin-top:16px;">이 설비 관련 조사 이력 (A2A Investigation Task)</h3>
+      <div class="timeline">${investigationHistory}</div>
     </div>
   `;
 }
@@ -1118,7 +1136,7 @@ function renderAnomalies(report) {
 
 /* ---------------- anomaly log (persisted history) ---------------- */
 function renderAnomalyLog(rows) {
-  const thead = "<tr><th>감지 시각</th><th>심각도</th><th>설비</th><th>공정</th><th>불량률</th><th>동료평균</th><th>Z-score</th><th>표본수</th></tr>";
+  const thead = "<tr><th>감지 시각</th><th>심각도</th><th>설비</th><th>공정</th><th>불량률</th><th>동료평균</th><th>Z-score</th><th>표본수</th><th>조사</th></tr>";
   const body = rows.map(r => `
     <tr>
       <td>${new Date(r.detected_at).toLocaleString("ko-KR")}</td>
@@ -1129,12 +1147,13 @@ function renderAnomalyLog(rows) {
       <td>${(r.peer_mean_rate * 100).toFixed(1)}%</td>
       <td>${r.z_score != null ? r.z_score : "-"}</td>
       <td>${r.total_inspections}</td>
+      <td>${investigateButtonForTaskId(r.investigation_task_id)}</td>
     </tr>
   `).join("");
   document.getElementById("anomaly-log-wrap").innerHTML = `
     <table>
       <thead>${thead}</thead>
-      <tbody>${body || `<tr><td class="empty" colspan="8">아직 기록된 이상 없음 — 시뮬레이션이 30초마다 자동으로 검사합니다.</td></tr>`}</tbody>
+      <tbody>${body || `<tr><td class="empty" colspan="9">아직 기록된 이상 없음 — 시뮬레이션이 30초마다 자동으로 검사합니다.</td></tr>`}</tbody>
     </table>`;
 }
 
@@ -1288,7 +1307,10 @@ function approvalPendingCard(r) {
 }
 
 function investigateButton(evidence) {
-  const taskId = approvalTaskId(evidence);
+  return investigateButtonForTaskId(approvalTaskId(evidence));
+}
+
+function investigateButtonForTaskId(taskId) {
   return taskId != null ? `<button class="btn" data-investigate="${taskId}">조사 근거 보기</button>` : "";
 }
 

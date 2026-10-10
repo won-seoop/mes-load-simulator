@@ -759,14 +759,13 @@
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
-- [ ] 2026-10-10에 컨트롤타워 판단 탭에 추가한 `app.a2a.latest_task_ids`(설비/공정 스텝 + cutoff로
-      가장 최근 조사 Task를 배치 조회)는 지금 `GET /control-tower/decisions` 한 곳에만 연결돼
-      있다. 같은 헬퍼를 설비 상세 드릴다운 드로어("이 설비 관련 조사 이력")와 "이상 이력" 화면
-      (과거 AnomalyLog 행에 연결된 조사 Task 표시)에도 연결하면 2026-10-09 Update부터 반복
-      언급된 두 남은 gap을 닫을 수 있다 — 다만 그 두 화면은 "그 시점 하나의 최신 Task"가 아니라
-      "그 설비/이상과 관련된 조사 이력 전체(복수)"를 보여줘야 더 유용하므로, `latest_task_ids`를
-      그대로 재사용하기보다 `equipment_id`별 Task 목록을 돌려주는 자매 함수가 필요한지 먼저
-      판단한다.
+- [x] (2026-10-11 완료) ~~2026-10-10에 컨트롤타워 판단 탭에 추가한 `app.a2a.latest_task_ids`를
+      설비 드릴다운 드로어와 "이상 이력" 화면에도 연결~~ → 설비 드로어는 기존 `GET
+      /a2a/tasks?equipment_id=` 필터(이력 전체를 이미 반환)를 그대로 재사용했고, "이상 이력"은
+      `anomaly_log_id` 직접 FK 조회용 `task_ids_by_anomaly_log`를 새로 추가했다 — 둘 다
+      `latest_task_ids`를 재사용하지 않았다(위 완료 섹션 참고). 새 "다음 후보": 컨트롤타워 판단
+      탭도 "결정 시점 이전 최신 1건" 대신 이력 전체를 보여주도록 확장할 가치가 있는지 판단, 설비
+      드로어의 조사 이력도 감사 로그처럼 페이지네이션 없이 `limit=100`을 그대로 쓴다.
 - [x] (2026-10-06 완료) ~~agent_gateway 전용 가상환경 분리~~ → `.venv-mcp/`를 실제로 만들어
       `pip install -r agent_gateway/requirements.txt`로 `mcp[cli]`를 설치하고, 메인 `.venv`와
       완전히 분리된 상태로 smoke test와 신규 Tool 2개(`get_agent_cards` 호출 포함)를 모두
@@ -930,6 +929,48 @@
       실제로 유발한 조사라는 보장은 아니다 — 같은 설비에 대한 두 조사 Task가 억제 창(5분) 안에서
       합쳐지지 않고 모두 결정 이전에 생성된 드문 경우, 더 최근 것이 선택된다(그 둘의 조사
       결과가 거의 항상 같은 조건을 설명하므로 실질적으로는 문제되지 않는다고 판단).
+
+- [x] (2026-10-11 완료) ~~2026-10-10에 남긴 두 gap: (1) 설비 상세 드릴다운 드로어에 "이 설비 관련
+      조사 이력", (2) "이상 이력" 화면에서 과거 AnomalyLog 행에 연결된 조사 표시~~ → 둘 다 닫았다.
+      먼저 코드를 확인해보니 (1)은 새 배치 조회 함수가 필요 없었다 — `GET /a2a/tasks?equipment_id=`
+      필터(2026-10-05부터 이미 존재)가 "그 설비의 Task 전체 목록"을 최신순으로 그대로 돌려주고
+      있어서, 설비 드로어가 `/equipment/{id}/events`와 같은 `Promise.all`로 그 엔드포인트를 한 번
+      더 호출해 "이 설비 관련 조사 이력" 섹션에 나열하기만 하면 됐다(새 백엔드 쿼리 없음). (2)는
+      `InvestigationTask.anomaly_log_id`가 이미 1:1 FK로 존재하지만(품질 에이전트가 `AnomalyLog`
+      행을 쓸 때 그 행의 id를 그대로 넘겨 호출 — `app/simulation.py`) `GET /a2a/tasks`에는 그 값으로
+      거르는 필터가 없었다. `latest_task_id`(2026-10-10)처럼 "커서 이전 최신값 추정" 방식이 아니라
+      — 이 관계는 추정이 아니라 직접 FK이므로 — 새 `app.a2a.task_ids_by_anomaly_log(db, ids)`가
+      `anomaly_log_id IN (...)` 한 번의 쿼리로 `{anomaly_log_id: task_id}` 맵을 돌려주게 했고,
+      `GET /quality/anomaly-log`가 이를 `investigation_task_id` 필드로 노출한다. `GET /a2a/tasks`에도
+      `anomaly_log_id` 쿼리 파라미터를 추가해(기존 `equipment_id`/`process_step`과 상호 배타,
+      2개 이상 지정 시 422) 같은 값으로 직접 조회할 수 있게 했다. `agent_gateway`의
+      `get_investigation_tasks`/`get_anomaly_log`와 README도 함께 맞췄다.
+
+      검증: 신규 pytest 7개(234개 전체 통과 — `anomaly_log_id` 필터 3건, 상호배타 422 2건,
+      `task_ids_by_anomaly_log` 2건, `/quality/anomaly-log` 응답 배선 2건). 격리 서버(포트 19010)에서
+      시뮬레이션을 켜고 `scripts/demo_approvals.py s2`로 INSPECT-01 품질 이상을 실제로 만들어
+      `AnomalyLog` 행(id=1)과 그 조사 Task(id=1)가 실제로 생성되는 것을 wall-clock으로 확인했고,
+      `GET /quality/anomaly-log`가 `investigation_task_id: 1`을, `GET /a2a/tasks?anomaly_log_id=1`이
+      같은 Task를 정확히 돌려주는 것을 curl로 확인했다. Playwright로 (1) "이상 이력" 탭의 "조사 근거
+      보기" 버튼 클릭 → 기존 드로어가 올바른 Task를 열고, (2) 설비 현황의 INSPECT-01 카드를 클릭 →
+      드로어에 "이 설비 관련 조사 이력" 섹션이 나타나고 그 안의 버튼도 같은 드로어를 여는 것,
+      (3) 모바일 390px에서 페이지 레벨 가로 스크롤 없음을 확인했다(기존 `/favicon.ico` 404 외
+      콘솔/네트워크 에러 없음). `.venv-mcp`의 `agent_gateway.smoke_test`도 `anomaly_log_id` 호출을
+      추가해 통과시켰다. 50 VU/3분 파이프라인 재확인(요청 16,214건, 실패율 0.00%, RPS 90.01,
+      p95 69ms/p99 160ms, Server 5xx/IntegrityError 0, 예상 409 충돌 44건 — 최근 기준선 안).
+      INSPECT-03 WARNING(24.59% vs 피어 0%, n=61)은 2026-09-20부터 반복된 동일 Baseline 패턴이라
+      새 이상으로 기록하지 않았다.
+
+      PAR 판단: 실제 버그를 발견·수정한 것이 아니라 계획된 기능(이미 있던 설계 결정 2026-10-10의
+      "자매 함수 필요성 판단"을 실행)이고, 두 화면 모두 기존 데이터·엔드포인트 패턴을 그대로
+      재사용해 "두 대안을 실제로 비교"한 것도 약하다고 보아 PAR 대신 'D. 설계 결정'·'E. 문제·해결
+      로그'에만 기록했다(CLAUDE.md 42번 기준, 2026-10-08과 같은 판단).
+
+      한계: 설비 드로어의 조사 이력은 `GET /a2a/tasks`의 기본 `limit=100`을 그대로 쓰고
+      페이지네이션이 없다(2026-10-02 감사 로그 화면이 남긴 것과 같은 유형의 한계). 컨트롤타워
+      판단 탭은 여전히 "그 결정 시점 이전 최신 1건"만 보여준다(`latest_task_id`) — 이제 다른 두
+      화면이 "이력 전체"를 보여주는 패턴이 생겼으니, 컨트롤타워 탭도 같은 식으로 확장할 가치가
+      있는지는 다음에 판단한다.
 
 ## 에이전트 작업 원칙
 

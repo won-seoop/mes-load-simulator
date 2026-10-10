@@ -5,7 +5,7 @@ import pytest
 
 from app import a2a
 from app.database import SessionLocal
-from app.models import EquipmentDowntimeEvent, InvestigationTask
+from app.models import AnomalyLog, EquipmentDowntimeEvent, InvestigationTask
 
 T0 = datetime(2026, 1, 1, 12, 0, 0)
 
@@ -149,6 +149,48 @@ def test_a2a_tasks_endpoint_rejects_equipment_id_and_process_step_together(clien
     response = client.get("/a2a/tasks", params={"equipment_id": 1, "process_step": "ETCH"})
 
     assert response.status_code == 422
+
+
+def test_a2a_tasks_endpoint_filters_by_anomaly_log_id(client, db):
+    a2a.investigate_quality_anomaly(db, _anomaly(equipment_id=1), anomaly_log_id=10, now=T0)
+    a2a.investigate_quality_anomaly(
+        db, _anomaly(equipment_id=2, equipment_name="ETCH-02"), anomaly_log_id=11, now=T0
+    )
+
+    response = client.get("/a2a/tasks", params={"anomaly_log_id": 11})
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    assert rows[0]["equipment_id"] == 2
+    assert rows[0]["anomaly_log_id"] == 11
+
+
+def test_a2a_tasks_endpoint_rejects_anomaly_log_id_combined_with_equipment_id(client, db):
+    response = client.get("/a2a/tasks", params={"equipment_id": 1, "anomaly_log_id": 1})
+
+    assert response.status_code == 422
+
+
+def test_a2a_tasks_endpoint_rejects_anomaly_log_id_combined_with_process_step(client, db):
+    response = client.get("/a2a/tasks", params={"process_step": "ETCH", "anomaly_log_id": 1})
+
+    assert response.status_code == 422
+
+
+def test_task_ids_by_anomaly_log_maps_each_row_to_its_own_task(db):
+    t1 = a2a.investigate_quality_anomaly(db, _anomaly(equipment_id=1), anomaly_log_id=100, now=T0)
+    t2 = a2a.investigate_quality_anomaly(
+        db, _anomaly(equipment_id=2, equipment_name="ETCH-02"), anomaly_log_id=101, now=T0
+    )
+
+    result = a2a.task_ids_by_anomaly_log(db, [100, 101, 999])
+
+    assert result == {100: t1.id, 101: t2.id}
+
+
+def test_task_ids_by_anomaly_log_empty_input_returns_empty_dict(db):
+    assert a2a.task_ids_by_anomaly_log(db, []) == {}
 
 
 def test_a2a_task_detail_404_when_missing(client):
@@ -325,3 +367,47 @@ def test_a2a_agent_cards_endpoint(client):
         "equipment-investigation-agent",
         "production-investigation-agent",
     }
+
+
+def _anomaly_log_row(db, **overrides):
+    base = dict(
+        detected_at=T0,
+        equipment_id=1,
+        equipment_name="ETCH-01",
+        process_step="ETCH",
+        severity="CRITICAL",
+        defect_rate=0.3,
+        peer_mean_rate=0.05,
+        z_score=2.4,
+        total_inspections=20,
+        method="same-process peer defect-rate comparison",
+    )
+    base.update(overrides)
+    row = AnomalyLog(**base)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def test_anomaly_log_endpoint_exposes_its_own_investigation_task(client, db):
+    log_row = _anomaly_log_row(db)
+    task = a2a.investigate_quality_anomaly(db, _anomaly(), anomaly_log_id=log_row.id, now=T0)
+
+    response = client.get("/quality/anomaly-log")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    assert rows[0]["id"] == log_row.id
+    assert rows[0]["investigation_task_id"] == task.id
+
+
+def test_anomaly_log_endpoint_reports_none_when_no_investigation_ran(client, db):
+    _anomaly_log_row(db)
+
+    response = client.get("/quality/anomaly-log")
+
+    rows = response.json()
+    assert len(rows) == 1
+    assert rows[0]["investigation_task_id"] is None

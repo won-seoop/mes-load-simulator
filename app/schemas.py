@@ -234,6 +234,7 @@ class AnomalyLogOut(BaseModel):
     total_inspections: int
     method: str
     note: Optional[str]
+    investigation_task_id: Optional[int] = None
 
     class Config:
         from_attributes = True

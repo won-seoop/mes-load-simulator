@@ -1233,13 +1233,41 @@ def quality_anomaly_log(db: Session = Depends(get_db)):
     and forgotten immediately after), these rows are written once each time
     the simulation engine's periodic check finds a *new* anomaly (throttled
     per equipment), so this is what answers "when did this first show up."
+
+    Each row also carries `investigation_task_id`: the A2A investigation
+    task (app/a2a.py) the quality agent created for it, if any, so the
+    dashboard's "이상 이력" page can offer "조사 근거 보기" per row. Resolved
+    in one batched query (app.a2a.task_ids_by_anomaly_log), not one query
+    per row — this is a direct anomaly_log_id foreign-key lookup, not the
+    "most recent before a cutoff" heuristic GET /control-tower/decisions
+    uses, since a quality investigation is created for at most one
+    AnomalyLog row.
     """
-    return (
+    rows = (
         db.query(AnomalyLog)
         .order_by(AnomalyLog.detected_at.desc())
         .limit(100)
         .all()
     )
+    task_ids = a2a.task_ids_by_anomaly_log(db, [r.id for r in rows])
+    return [
+        {
+            "id": r.id,
+            "detected_at": r.detected_at,
+            "equipment_id": r.equipment_id,
+            "equipment_name": r.equipment_name,
+            "process_step": r.process_step,
+            "severity": r.severity,
+            "defect_rate": r.defect_rate,
+            "peer_mean_rate": r.peer_mean_rate,
+            "z_score": r.z_score,
+            "total_inspections": r.total_inspections,
+            "method": r.method,
+            "note": r.note,
+            "investigation_task_id": task_ids.get(r.id),
+        }
+        for r in rows
+    ]
 
 
 @app.get("/metrics", response_model=MetricsOut)
@@ -1484,6 +1512,7 @@ def _investigation_task_out(t: InvestigationTask) -> dict:
 def list_investigation_tasks(
     equipment_id: Optional[int] = None,
     process_step: Optional[str] = None,
+    anomaly_log_id: Optional[int] = None,
     limit: int = 100,
     db: Session = Depends(get_db),
 ):
@@ -1498,13 +1527,17 @@ def list_investigation_tasks(
     production agent's rows always carry `equipment_id=None` with
     `equipment_name` set to the process step (e.g. "ETCH"), since its
     proposals are about a whole step with no single equipment_id to filter
-    on (app/a2a.py:investigate_step_hold). Passing both is rejected rather
-    than silently ANDed into an always-empty result, since no task row can
-    match a specific equipment_id and also have equipment_id=None."""
-    if equipment_id is not None and process_step is not None:
+    on (app/a2a.py:investigate_step_hold). `anomaly_log_id` narrows to the
+    one task (if any) the quality agent created for that AnomalyLog row —
+    used by the dashboard's "이상 이력" page. All three are mutually
+    exclusive and rejected together rather than silently ANDed into an
+    always-empty result, since no task row can match more than one of
+    them."""
+    filters_given = sum(x is not None for x in (equipment_id, process_step, anomaly_log_id))
+    if filters_given > 1:
         raise HTTPException(
             status_code=422,
-            detail="equipment_id and process_step are mutually exclusive filters",
+            detail="equipment_id, process_step and anomaly_log_id are mutually exclusive filters",
         )
     query = db.query(InvestigationTask)
     if equipment_id is not None:
@@ -1514,6 +1547,8 @@ def list_investigation_tasks(
             InvestigationTask.equipment_id.is_(None),
             InvestigationTask.equipment_name == process_step,
         )
+    elif anomaly_log_id is not None:
+        query = query.filter(InvestigationTask.anomaly_log_id == anomaly_log_id)
     rows = query.order_by(InvestigationTask.id.desc()).limit(min(limit, 500)).all()
     return [_investigation_task_out(t) for t in rows]
 
