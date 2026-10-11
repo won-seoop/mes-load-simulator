@@ -256,4 +256,36 @@ def summary(db: Session, now: Optional[datetime] = None) -> dict:
         "edit_rate": edit_rate,
         "avg_decision_wait_seconds": avg_decision_wait_seconds,
         "fast_approval_rate": fast_approval_rate,
+        "by_agent": by_agent(db),
     }
+
+
+def by_agent(db: Session) -> dict[str, dict]:
+    """Approval-queue track record per proposing agent.
+
+    `ControlTowerDecision` can merge several agents' proposals into one
+    `ApprovalRequest` (`source_agent` becomes a comma-joined
+    "rule:a, rule:b" string — see app/control_tower.py `_merge_group`). A
+    merged request is counted once for *each* contributing agent: the
+    question this answers is "when this agent's evidence fed a decision,
+    how often did a person agree with it", not "how many requests had no
+    other agent's evidence". So the per-agent `proposed_total` values can
+    sum to more than the queue's total request count — that is intended,
+    not a double-counting bug.
+    """
+    rows = db.query(ApprovalRequest.source_agent, ApprovalRequest.status).all()
+    stats: dict[str, dict] = {}
+    for source_agent, status in rows:
+        for agent in (a.strip() for a in source_agent.split(",")):
+            entry = stats.setdefault(
+                agent, {"proposed_total": 0, "approved_total": 0, "rejected_total": 0}
+            )
+            entry["proposed_total"] += 1
+            if status == ApprovalStatus.APPROVED.value:
+                entry["approved_total"] += 1
+            elif status == ApprovalStatus.REJECTED.value:
+                entry["rejected_total"] += 1
+    for entry in stats.values():
+        decided = entry["approved_total"] + entry["rejected_total"]
+        entry["approval_rate"] = (entry["approved_total"] / decided) if decided else None
+    return stats

@@ -195,6 +195,55 @@ def test_summary_reports_decision_wait_and_flags_fast_approvals(client):
     assert s["fast_approval_rate"] == pytest.approx(0.5)
 
 
+def test_summary_by_agent_counts_each_agent_separately(client):
+    a = client.post(
+        "/approvals", json=_payload(dedupe_key="a", source_agent="rule:quality-anomaly")
+    ).json()
+    b = client.post(
+        "/approvals", json=_payload(dedupe_key="b", source_agent="rule:equipment-downtime")
+    ).json()
+    c = client.post(
+        "/approvals", json=_payload(dedupe_key="c", source_agent="rule:quality-anomaly")
+    ).json()
+    client.post(f"/approvals/{a['id']}/decision", json={"action": "approve"})
+    client.post(f"/approvals/{b['id']}/decision", json={"action": "reject", "reason": "오탐"})
+    # c stays PENDING: proposed but not yet decided.
+
+    s = client.get("/approvals/summary").json()
+    quality = s["by_agent"]["rule:quality-anomaly"]
+    assert quality["proposed_total"] == 2
+    assert quality["approved_total"] == 1
+    assert quality["rejected_total"] == 0
+    assert quality["approval_rate"] == pytest.approx(1.0)
+
+    equipment = s["by_agent"]["rule:equipment-downtime"]
+    assert equipment["proposed_total"] == 1
+    assert equipment["approved_total"] == 0
+    assert equipment["rejected_total"] == 1
+    assert equipment["approval_rate"] == pytest.approx(0.0)
+
+
+def test_summary_by_agent_attributes_merged_proposal_to_each_contributor(client):
+    merged = client.post(
+        "/approvals",
+        json=_payload(dedupe_key="merged", source_agent="rule:quality-anomaly, rule:equipment-downtime"),
+    ).json()
+    client.post(f"/approvals/{merged['id']}/decision", json={"action": "approve"})
+
+    s = client.get("/approvals/summary").json()
+    # A control-tower-merged request counts once for *each* contributing agent
+    # (see app/approvals.py by_agent docstring) -- not split or deduped between them.
+    for agent in ("rule:quality-anomaly", "rule:equipment-downtime"):
+        assert s["by_agent"][agent]["proposed_total"] == 1
+        assert s["by_agent"][agent]["approved_total"] == 1
+        assert s["by_agent"][agent]["approval_rate"] == pytest.approx(1.0)
+
+
+def test_summary_by_agent_empty_queue_is_empty_dict(client):
+    s = client.get("/approvals/summary").json()
+    assert s["by_agent"] == {}
+
+
 def test_quality_anomaly_creates_one_request_that_counts_up_not_duplicates(client, monkeypatch):
     _seed_inspect03_anomaly(client)
     engine = SimulationEngine()

@@ -500,6 +500,15 @@
           </div>
         </div>
         <div class="ap-summary" id="ap-summary"></div>
+        <section class="block">
+          <h3>에이전트별 제안 신뢰도</h3>
+          <div class="page-desc">
+            같은 설비에 대한 여러 에이전트의 제안은 컨트롤타워가 하나로 합칠 수 있습니다(위 설명 참고) —
+            합쳐진 요청은 기여한 에이전트 각각의 제안 건수로 집계되므로, 아래 제안 건수 합은 전체
+            요청 수보다 클 수 있습니다.
+          </div>
+          <div class="table-wrap"><table id="ap-by-agent"><thead><tr><th>에이전트</th><th>제안</th><th>승인</th><th>반려</th><th>승인율</th></tr></thead><tbody></tbody></table></div>
+        </section>
         <div class="ap-tabs" id="ap-tabs"></div>
         <div id="ap-list"></div>
       </section>
@@ -1232,6 +1241,18 @@ function renderApprovals(rows, summary, force = false) {
     <div class="card"><div class="k">승인율 · 수정율</div><div class="v">${fmtPct(summary.approval_rate)} · ${fmtPct(summary.edit_rate)}</div></div>
     <div class="card"><div class="k">평균 결정 대기시간</div><div class="v">${fmtDuration(summary.avg_decision_wait_seconds)}</div></div>
     <div class="card"><div class="k">너무 빠른 승인 비율 (&lt;${FAST_APPROVAL_THRESHOLD_SECONDS}초)</div><div class="v">${fmtPct(summary.fast_approval_rate)}</div></div>`;
+
+  const agentRows = Object.entries(summary.by_agent || {});
+  document.querySelector("#ap-by-agent tbody").innerHTML = agentRows.length
+    ? agentRows.map(([agent, s]) => `
+        <tr>
+          <td>${agent}</td>
+          <td>${s.proposed_total}</td>
+          <td>${s.approved_total}</td>
+          <td>${s.rejected_total}</td>
+          <td>${fmtPct(s.approval_rate)}</td>
+        </tr>`).join("")
+    : `<tr><td class="empty" colspan="5">아직 제안이 없습니다</td></tr>`;
 
   const tabs = [["PENDING", `대기 (${summary.pending_count})`], ["DECIDED", "처리 완료"], ["TOWER", `컨트롤타워 판단 (${towerDecisions.length})`]];
   document.getElementById("ap-tabs").innerHTML = tabs.map(([k, label]) =>

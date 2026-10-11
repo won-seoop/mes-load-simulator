@@ -294,6 +294,7 @@ class ApprovalSummaryOut(BaseModel):
     edit_rate: Optional[float]
     avg_decision_wait_seconds: Optional[float]
     fast_approval_rate: Optional[float]
+    by_agent: dict[str, dict]
 
 
 class ControlTowerDecisionOut(BaseModel):
