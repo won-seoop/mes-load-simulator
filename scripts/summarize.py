@@ -4,6 +4,11 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    from scripts import baseline  # when imported as scripts.summarize (pytest)
+except ImportError:
+    import baseline  # when run directly: `python scripts/summarize.py <date>`
+
 def load_locust_stats(raw_dir: Path) -> dict:
     stats_file = raw_dir / "locust_stats.csv"
     if not stats_file.exists():
@@ -139,6 +144,7 @@ def main():
 
     reports_dir = Path("reports")
     reports_dir.mkdir(exist_ok=True)
+    summary["day_over_day_baseline"] = baseline.check_today(summary, reports_dir, run_date)
     (reports_dir / f"{run_date}.json").write_text(json.dumps(summary, indent=2))
 
     md = [f"# MES Daily Load Report - {run_date}", ""]
@@ -227,6 +233,29 @@ def main():
         md.append(f"- Downtime by reason, factory-wide: {downtime_by_reason}")
     else:
         md.append("- (no data)")
+
+    md.append("")
+    md.append("## Day-over-Day Statistical Baseline Check")
+    md.append(
+        "- Compares today against the mean/stdev of prior daily reports "
+        f"(z-score, flagged at |z| >= {baseline.Z_THRESHOLD}; see scripts/baseline.py)."
+    )
+    dod = summary["day_over_day_baseline"]
+    for name, r in dod.items():
+        if r["flag"] == "insufficient_history":
+            md.append(f"- {name}: today={r['today']} (insufficient history, need >= {baseline.MIN_HISTORY} prior reports)")
+            continue
+        if r["flag"] == "no_data_today":
+            md.append(f"- {name}: (no data today) baseline mean={r['baseline']['mean']}")
+            continue
+        b = r["baseline"]
+        marker = "ANOMALY" if r["flag"] == "anomaly" else "normal"
+        if r["confidence"] == "low":
+            marker += " (low confidence: historically high variance, cv={})".format(b["cv"])
+        md.append(
+            f"- {name}: today={r['today']} vs baseline mean={b['mean']} stdev={b['stdev']} "
+            f"(n={b['n']}) -> z={r['z_score']} [{marker}]"
+        )
 
     (reports_dir / f"{run_date}.md").write_text("\n".join(md))
     print("\n".join(md))
