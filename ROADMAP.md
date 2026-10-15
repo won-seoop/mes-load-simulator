@@ -1036,11 +1036,11 @@
       기준으로 명시~~ → "전일 대비 이상 탐지 고도화" 항목과 함께 아래 완료 섹션(2026-10-14 Update)에서
       같이 닫았다. 한 지표만 상수로 박아두는 대신, 모든 핵심 지표에 적용되는 일반화된 통계 기반
       검사로 구현했다.
-- [ ] `scripts/demo_approvals.py`로 세 규칙 기반 에이전트(`rule:quality-anomaly`/
+- [x] (2026-10-16 완료) ~~`scripts/demo_approvals.py`로 세 규칙 기반 에이전트(`rule:quality-anomaly`/
       `rule:equipment-downtime`/`rule:production-hold`) 각각 최소 1건씩 결정된 데이터를 만들어,
       오늘 추가한 승인 큐 `by_agent` 집계가 일상 리포트에서도 항상 빈 값이 아닌 실측값으로 채워지는
       모습을 한 번 확인해볼 가치가 있다(2026-10-04 PAR-019가 승인 큐 전체 지표에 했던 것과 같은
-      종류의 보정).
+      종류의 보정).~~ → 아래 완료 섹션(2026-10-16 Update) 참고.
 - [ ] (2026-10-14 신규) `scripts/baseline.py`의 Z_THRESHOLD=3.0과 HIGH_VARIANCE_CV=0.5는 25일치
       실측 분포를 보고 정한 값이지만 히스토리가 30~60일로 늘어나면(특히 `peak_lots_on_hold_count`처럼
       cv>0.5인 지표) 다시 측정해 임계값이 여전히 적절한지 재검증할 가치가 있다. 또한 지금은 단순
@@ -1048,6 +1048,21 @@
       0 근처에 몰리고 가끔 크게 튀는 형태일 수 있음) 중앙값/MAD(Median Absolute Deviation) 같은
       강건 통계량으로 바꾸는 것이 나을지 실측 분포 모양을 직접 히스토그램으로 확인해 판단해볼 가치가
       있다.
+- [ ] (2026-10-16 신규) `app/approvals.py::by_agent`가 PENDING 상태 요청도 `proposed_total`에
+      포함한다는 사실을 오늘 캘리브레이션 재실행 중에 직접 관측했다(결정된 요청(A/B) 이후 같은
+      설비에서 추가 DOWN 이벤트(그중 1건은 배경 `RANDOM_FAULT`와 우연히 겹침)가 새 PENDING 제안을
+      만들어 `rule:equipment-downtime`의 `proposed_total=5`가 실제 결정 건수(승인 2+반려 1=3)보다
+      커졌다 — docstring이 이미 "합이 큐 전체 건수보다 커질 수 있음"을 경고하고 있어 버그는 아니지만,
+      "결정되지 않은 채 남은 PENDING도 같이 세고 있다"는 사실까지는 docstring에 명시돼 있지 않았다.
+      일상 운영 관점에서 "이 에이전트가 제안한 것 중 몇 %가 아직 결정되지 않은 채 남아 있는가"(큐
+      적체)를 `approval_rate`와 별도로 `by_agent`에 노출할 가치가 있는지(예: `pending_total` 필드
+      추가) 검토할 가치가 있다.
+- [ ] (2026-10-16 신규) 일상 50 VU/3분 Locust 파이프라인은 자율 시뮬레이션을 켜지 않아 승인 큐
+      `by_agent`/`approval_rate` 등이 매일 리포트에서 항상 빈 값으로 남는다(오늘도 동일). Locust
+      시나리오에 자율 시뮬레이션 시작 + 저빈도 데모 승인 결정을 포함시켜 일상 리포트 자체에서
+      비어 있지 않은 `by_agent`를 보고 싶다면, 이는 "운영자 명령 Load Test"라는 기존 워크로드의
+      성격을 바꾸는 결정이라 별도 설계 검토(워크로드 분리 여부, CLAUDE.md 25번 "부하 유형을
+      혼동하지 않는다" 원칙과의 관계)가 먼저 필요하다 — 바로 구현하지 않고 다음 후보로만 남긴다.
 
 ## 2026-10-14 Update — 전일 대비 이상 탐지를 고정 임계치에서 N일 통계 기반(z-score)으로 일반화
 
@@ -1104,6 +1119,60 @@
 - PAR 판단: 실제 반복된 수동 판단 부담(문제) → 원인(고정 임계치로는 안 됨, 변동폭이 지표마다 다름) →
   대안 A/B 비교 → 과거 실제 데이터로 선택 근거 검증까지 모두 충족해 PAR 후보로 판단. PAR-021로 Notion
   '07. PAR Experience'에 기록(상세 내용 참고).
+- 커밋: 이 날짜의 git 커밋 참고.
+
+## 2026-10-16 Update — `scripts/demo_calibrate_approval_metrics.py`에 `rule:production-hold` 시나리오(req E)를 추가해 승인 큐 `by_agent`가 세 에이전트 모두를 실측값으로 채우는지 확인
+
+- 2026-10-15에 추가한 `GET /approvals/summary`의 `by_agent`(에이전트별 제안 신뢰도)는 설계 당시부터
+  "일상 Locust 부하테스트는 자율 시뮬레이션을 켜지 않아 세 규칙 기반 에이전트
+  (`rule:quality-anomaly`/`rule:equipment-downtime`/`rule:production-hold`)가 애초에 제안을 만들지
+  않는다"는 한계를 안고 있었고, 기존 `scripts/demo_calibrate_approval_metrics.py`(2026-10-04,
+  PAR-019가 승인 큐 전체 지표를 보정할 때 작성)를 다시 읽어보니 실제로 `rule:quality-anomaly`와
+  `rule:equipment-downtime` 두 에이전트의 결정된 샘플만 만들고 `rule:production-hold`는 빠져
+  있었다(req A/B/C=equipment-downtime, req D=quality-anomaly). ROADMAP "다음 후보"가 가리키던
+  "세 에이전트 각각 최소 1건씩"이 실제로는 두 에이전트만 충족된 상태였다는 것을 코드를 직접 읽어서
+  확인했다(CLAUDE.md 16번 "사전 확인" 원칙 — 계획 전에 기존 코드를 먼저 확인).
+- `rule:production-hold`(`app/production_agent.py`)는 한 공정 스텝의 설비 전체가 동시에 DOWN이어야
+  발동하는 신호라, 기존 캘리브레이션 스크립트의 다른 네 요청(개별 설비 토글 또는 1초 내 복구되는
+  팩토리 전체 동시다운)로는 절대 재현되지 않는다 — 2026-09-30 PAR-016이 바로 이 문제로
+  `demo_approvals.py`에 `s4` 시나리오(설비를 즉시 복구하지 않고 90초 이상 묶어둠)를 따로 추가했던
+  전례가 있다.
+- **대안 A (검토 후 기각): `demo_approvals.py`의 `s4`를 캘리브레이션 스크립트에서 서브프로세스로
+  실행** — 코드 재사용은 되지만, `s4`는 독립 실행형 CLI(별도 프로세스, stdout 로그만 남김)라
+  캘리브레이션 스크립트가 "req E가 실제로 PENDING으로 나타났는지, 몇 번 id로 결정했는지"를 반환값으로
+  받아 `results` 딕셔너리에 넣고 요약 로그(`decisions recorded: ...`)에 포함시키기 어렵다. 또한
+  `s4`는 독립적으로 자기 완결적인 데모용 스크립트로 유지하는 것이 기존 설계 의도(이 스크립트의 기존
+  docstring: "this script intentionally runs as a single self-contained file")였다.
+- **대안 B (선택): `s4`와 같은 기법(한 스텝의 설비 3대를 전부 DOWN시켜 90초 이상 유지)을 캘리브레이션
+  스크립트 안에 `trigger_and_decide_production_hold()`로 직접 구현, req E로 추가** — 기존 req A-D보다
+  먼저 실행하고 완전히 정리(복구)한 뒤에 넘어가도록 순서를 바꿨다: req E가 쓰는 ETCH 스텝은 req A가
+  쓰는 `ETCH-01` 단일 설비와 겹치는데, req E가 먼저 끝나고 복구되면 이후 req A의 개별 다운/복구 토글이
+  깨끗한 새 제안으로 들어간다(반대 순서였다면 req E의 90초+ 다운이 req A의 이미 결정된 제안을 다시
+  PENDING으로 띄워 혼란을 줄 뻔했다). `s4 --isolate`와 같은 이유로 배경 무작위 고장을 40초 전부터
+  억제하고(새로 주입된 억제만 "이후"의 무작위 다운을 막는다는 2026-10-01 캐비어트 그대로 적용), 15초간
+  로트가 ETCH에 쌓이도록 기다린 뒤 110초(MEDIUM 임계값 90초 + 20초 여유) 동안 전체 다운했다.
+- 검증: 격리 서버(포트 18300, 전용 DB, `.venv`)에서 전체 스크립트를 실제로 실행했다(실제 wall-clock
+  약 285초). 로그로 확인한 실제 타임라인: 0s 시뮬레이션 시작 → 0s 배경 고장 195초 억제 → 40s 억제
+  정착 대기 종료, 15초 대기 시작 → 55s ETCH 3대 DOWN → 183.2s `production-hold:ETCH` 제안이 실제
+  PENDING으로 나타남(id=1) → 5초 검토 후 승인 → 188.3s ETCH 복구 + 배경 고장 재허용 → 이후 req
+  A/B/C/D가 기존과 동일하게 213.5s/213.5s/233.5s/274.6s에 각각 PENDING으로 나타나 결정됨. 최종
+  `GET /approvals/summary`에서 `by_agent`가 처음으로 `rule:production-hold`
+  (proposed_total=1, approved_total=1, approval_rate=1.0)를 포함해 세 에이전트 모두를 실측값으로
+  보여주는 것을 확인했다(`rule:equipment-downtime` approval_rate=0.667, `rule:quality-anomaly`
+  approval_rate=1.0). 전체 pytest 246개는 데모 스크립트만 바꿔서 영향 없이 그대로 통과했고,
+  50 VU/3분 일일 파이프라인도 별도로 재확인했다(요청 15,763건, 실패율 0.00%, RPS 87.83, p95
+  120ms/p99 310ms, Server 5xx/IntegrityError 0, 예상 409 충돌 65건, Day-over-Day Baseline 11개 지표
+  전부 normal).
+- 한계: 이 보정은 일상 50 VU Locust 파이프라인에는 연결돼 있지 않다(docstring에 명시된 기존 설계
+  그대로 — "run against a fresh DB, not the daily load-test server"). 즉 오늘 생성된
+  `reports/2026-10-16.json`의 `by_agent`는 여전히 비어 있다 — 이번 실행으로 "세 에이전트 모두가
+  실제로 결정 가능한 샘플을 만들어낸다"는 스크립트 자체의 동작만 1회 격리 환경에서 확인한 것이고,
+  일상 리포트에 `by_agent`가 항상 채워지게 만드는 것은 범위 밖이다(그러려면 Locust 시나리오 자체가
+  자율 시뮬레이션을 켜야 하는데, 이는 부하테스트의 성격을 "운영자 명령 트래픽"에서 바꾸는 큰 결정이라
+  별도 검토가 필요 — 다음 후보에 남김).
+- PAR 판단: 새 버그를 발견/해결한 것이 아니라 이미 알려진 격차(세 에이전트 중 하나가 캘리브레이션에서
+  빠짐)를 계획대로 메운 작업이라 CLAUDE.md 42번 기준 PAR 대상은 아니라고 판단, ROADMAP과 Notion
+  'A. 진행 현황'에만 기록했다.
 - 커밋: 이 날짜의 git 커밋 참고.
 
 ## 에이전트 작업 원칙

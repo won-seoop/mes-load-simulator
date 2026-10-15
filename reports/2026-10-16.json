@@ -1,0 +1,275 @@
+{
+  "date": "2026-10-16",
+  "load_test": {
+    "requests": 15763,
+    "failures": 0,
+    "failure_rate": 0.0,
+    "rps": 87.82698554564472,
+    "p95_ms": 120.0,
+    "p99_ms": 310.0,
+    "avg_ms": 32.23242762995617,
+    "business_conflicts": 65,
+    "server_5xx": 0,
+    "integrity_errors": 0
+  },
+  "mes_metrics": {
+    "wip_count": 2337,
+    "completed_today": 171,
+    "scrap_count": 1,
+    "yield_rate": 0.9942,
+    "avg_cycle_time_seconds": 19.6,
+    "equipment_utilization": {
+      "ETCH-01": 173.0,
+      "ETCH-02": 171.4,
+      "ETCH-03": 165.9,
+      "CVD-01": 162.7,
+      "CVD-02": 172.0,
+      "CVD-03": 160.2,
+      "CMP-01": 167.2,
+      "CMP-02": 146.8,
+      "CMP-03": 164.4,
+      "INSPECT-01": 165.0,
+      "INSPECT-02": 152.7,
+      "INSPECT-03": 175.6
+    },
+    "throughput_per_hour": 171.0,
+    "lots_on_hold_count": 0,
+    "longest_current_hold_seconds": null,
+    "avg_resolved_hold_seconds": 13.1,
+    "oee_availability": 0.9355,
+    "oee_performance": 1.0,
+    "oee_quality": 0.9942,
+    "oee": 0.9301
+  },
+  "mes_metrics_peak_during_run": {
+    "sample_count": 18,
+    "peak_lots_on_hold_count": 33,
+    "peak_longest_hold_seconds": 21.2
+  },
+  "quality_metrics": {
+    "total_inspections": 183,
+    "pass_count": 171,
+    "fail_count": 12,
+    "defect_rate": 0.0656,
+    "first_pass_yield": 0.9389,
+    "scrap_count": 1,
+    "rework_count": 11,
+    "rework_rate": 0.0611,
+    "defects_by_process": {
+      "INSPECT": 12
+    },
+    "defects_by_equipment": {
+      "INSPECT-03": 12
+    }
+  },
+  "quality_anomalies": {
+    "generated_at": "2026-10-15T22:26:37.770505",
+    "method": "same-process peer defect-rate comparison",
+    "minimum_inspections": 10,
+    "minimum_rate_delta": 0.1,
+    "minimum_z_score": 2.0,
+    "anomalies": [
+      {
+        "equipment_id": 12,
+        "equipment_name": "INSPECT-03",
+        "process_step": "INSPECT",
+        "total_inspections": 61,
+        "fail_count": 12,
+        "defect_rate": 0.1967,
+        "peer_mean_rate": 0.0,
+        "peer_stddev": 0.0,
+        "z_score": null,
+        "rate_delta": 0.1967,
+        "severity": "WARNING"
+      }
+    ]
+  },
+  "equipment_reliability": {
+    "equipment_with_recorded_failures": 11,
+    "mttr_seconds_by_equipment": {
+      "ETCH-01": 6.1,
+      "ETCH-02": 6.1,
+      "ETCH-03": 5.8,
+      "CVD-01": 5.2,
+      "CVD-02": 5.2,
+      "CVD-03": 5.2,
+      "CMP-01": 5.3,
+      "CMP-02": 5.3,
+      "CMP-03": 5.4,
+      "INSPECT-01": 5.4,
+      "INSPECT-02": 5.3
+    },
+    "mtbf_seconds_by_equipment": {
+      "ETCH-01": 174.7,
+      "ETCH-02": 174.6,
+      "ETCH-03": 84.6,
+      "CVD-01": 55.1,
+      "CVD-02": 175.6,
+      "CVD-03": 55.1,
+      "CMP-01": 85.1,
+      "CMP-02": 30.9,
+      "CMP-03": 85.0,
+      "INSPECT-01": 85.0,
+      "INSPECT-02": 39.8
+    },
+    "downtime_seconds_by_reason": {
+      "STEP_FAULT_INJECTION": {
+        "count": 3,
+        "closed_count": 3,
+        "total_seconds": 18.1,
+        "mean_seconds": 6.0
+      },
+      "FAULT_INJECTION": {
+        "count": 23,
+        "closed_count": 23,
+        "total_seconds": 121.9,
+        "mean_seconds": 5.3
+      }
+    }
+  },
+  "day_over_day_baseline": {
+    "failure_rate": {
+      "today": 0.0,
+      "baseline": {
+        "n": 26,
+        "mean": 0.0001,
+        "stdev": 0.0003,
+        "cv": 4.7965
+      },
+      "z_score": -0.33,
+      "direction": "higher_is_worse",
+      "flag": "normal",
+      "confidence": "low"
+    },
+    "p95_ms": {
+      "today": 120.0,
+      "baseline": {
+        "n": 26,
+        "mean": 135.4231,
+        "stdev": 94.1616,
+        "cv": 0.6953
+      },
+      "z_score": -0.16,
+      "direction": "higher_is_worse",
+      "flag": "normal",
+      "confidence": "low"
+    },
+    "p99_ms": {
+      "today": 310.0,
+      "baseline": {
+        "n": 26,
+        "mean": 332.1923,
+        "stdev": 254.5173,
+        "cv": 0.7662
+      },
+      "z_score": -0.09,
+      "direction": "higher_is_worse",
+      "flag": "normal",
+      "confidence": "low"
+    },
+    "rps": {
+      "today": 87.82698554564472,
+      "baseline": {
+        "n": 26,
+        "mean": 89.4288,
+        "stdev": 5.2874,
+        "cv": 0.0591
+      },
+      "z_score": -0.3,
+      "direction": "lower_is_worse",
+      "flag": "normal",
+      "confidence": "normal"
+    },
+    "peak_lots_on_hold_count": {
+      "today": 33,
+      "baseline": {
+        "n": 23,
+        "mean": 20.0435,
+        "stdev": 15.5285,
+        "cv": 0.7747
+      },
+      "z_score": 0.83,
+      "direction": "higher_is_worse",
+      "flag": "normal",
+      "confidence": "low"
+    },
+    "peak_hold_wait_seconds": {
+      "today": 21.2,
+      "baseline": {
+        "n": 19,
+        "mean": 14.2158,
+        "stdev": 9.7482,
+        "cv": 0.6857
+      },
+      "z_score": 0.72,
+      "direction": "higher_is_worse",
+      "flag": "normal",
+      "confidence": "low"
+    },
+    "avg_resolved_hold_seconds": {
+      "today": 13.1,
+      "baseline": {
+        "n": 20,
+        "mean": 9.765,
+        "stdev": 4.8448,
+        "cv": 0.4961
+      },
+      "z_score": 0.69,
+      "direction": "higher_is_worse",
+      "flag": "normal",
+      "confidence": "normal"
+    },
+    "defect_rate": {
+      "today": 0.0656,
+      "baseline": {
+        "n": 23,
+        "mean": 0.0844,
+        "stdev": 0.0153,
+        "cv": 0.1809
+      },
+      "z_score": -1.23,
+      "direction": "higher_is_worse",
+      "flag": "normal",
+      "confidence": "normal"
+    },
+    "yield_rate": {
+      "today": 0.9942,
+      "baseline": {
+        "n": 26,
+        "mean": 0.9888,
+        "stdev": 0.0187,
+        "cv": 0.0189
+      },
+      "z_score": 0.29,
+      "direction": "lower_is_worse",
+      "flag": "normal",
+      "confidence": "normal"
+    },
+    "wip_count": {
+      "today": 2337,
+      "baseline": {
+        "n": 26,
+        "mean": 2329.2308,
+        "stdev": 112.8689,
+        "cv": 0.0485
+      },
+      "z_score": 0.07,
+      "direction": "informational",
+      "flag": "normal",
+      "confidence": "normal"
+    },
+    "completed_today": {
+      "today": 171,
+      "baseline": {
+        "n": 26,
+        "mean": 188.0769,
+        "stdev": 45.5244,
+        "cv": 0.2421
+      },
+      "z_score": -0.38,
+      "direction": "lower_is_worse",
+      "flag": "normal",
+      "confidence": "normal"
+    }
+  }
+}
