@@ -505,9 +505,10 @@
           <div class="page-desc">
             같은 설비에 대한 여러 에이전트의 제안은 컨트롤타워가 하나로 합칠 수 있습니다(위 설명 참고) —
             합쳐진 요청은 기여한 에이전트 각각의 제안 건수로 집계되므로, 아래 제안 건수 합은 전체
-            요청 수보다 클 수 있습니다.
+            요청 수보다 클 수 있습니다. 승인율은 결정된(승인/반려) 요청만 기준으로 하고, 대기중·대기율은
+            아직 결정되지 않은 PENDING 요청이 그 에이전트의 제안 중 몇 건·몇 %인지(큐 적체)를 별도로 보여줍니다.
           </div>
-          <div class="table-wrap"><table id="ap-by-agent"><thead><tr><th>에이전트</th><th>제안</th><th>승인</th><th>반려</th><th>승인율</th></tr></thead><tbody></tbody></table></div>
+          <div class="table-wrap"><table id="ap-by-agent"><thead><tr><th>에이전트</th><th>제안</th><th>승인</th><th>반려</th><th>대기중</th><th>승인율</th><th>대기율</th></tr></thead><tbody></tbody></table></div>
         </section>
         <div class="ap-tabs" id="ap-tabs"></div>
         <div id="ap-list"></div>
@@ -1250,9 +1251,11 @@ function renderApprovals(rows, summary, force = false) {
           <td>${s.proposed_total}</td>
           <td>${s.approved_total}</td>
           <td>${s.rejected_total}</td>
+          <td>${s.pending_total}</td>
           <td>${fmtPct(s.approval_rate)}</td>
+          <td>${fmtPct(s.pending_rate)}</td>
         </tr>`).join("")
-    : `<tr><td class="empty" colspan="5">아직 제안이 없습니다</td></tr>`;
+    : `<tr><td class="empty" colspan="7">아직 제안이 없습니다</td></tr>`;
 
   const tabs = [["PENDING", `대기 (${summary.pending_count})`], ["DECIDED", "처리 완료"], ["TOWER", `컨트롤타워 판단 (${towerDecisions.length})`]];
   document.getElementById("ap-tabs").innerHTML = tabs.map(([k, label]) =>

@@ -1048,7 +1048,7 @@
       0 근처에 몰리고 가끔 크게 튀는 형태일 수 있음) 중앙값/MAD(Median Absolute Deviation) 같은
       강건 통계량으로 바꾸는 것이 나을지 실측 분포 모양을 직접 히스토그램으로 확인해 판단해볼 가치가
       있다.
-- [ ] (2026-10-16 신규) `app/approvals.py::by_agent`가 PENDING 상태 요청도 `proposed_total`에
+- [x] (2026-10-17 완료) ~~`app/approvals.py::by_agent`가 PENDING 상태 요청도 `proposed_total`에
       포함한다는 사실을 오늘 캘리브레이션 재실행 중에 직접 관측했다(결정된 요청(A/B) 이후 같은
       설비에서 추가 DOWN 이벤트(그중 1건은 배경 `RANDOM_FAULT`와 우연히 겹침)가 새 PENDING 제안을
       만들어 `rule:equipment-downtime`의 `proposed_total=5`가 실제 결정 건수(승인 2+반려 1=3)보다
@@ -1056,13 +1056,20 @@
       "결정되지 않은 채 남은 PENDING도 같이 세고 있다"는 사실까지는 docstring에 명시돼 있지 않았다.
       일상 운영 관점에서 "이 에이전트가 제안한 것 중 몇 %가 아직 결정되지 않은 채 남아 있는가"(큐
       적체)를 `approval_rate`와 별도로 `by_agent`에 노출할 가치가 있는지(예: `pending_total` 필드
-      추가) 검토할 가치가 있다.
+      추가) 검토할 가치가 있다.~~ → 아래 완료 섹션(2026-10-17 Update) 참고.
 - [ ] (2026-10-16 신규) 일상 50 VU/3분 Locust 파이프라인은 자율 시뮬레이션을 켜지 않아 승인 큐
       `by_agent`/`approval_rate` 등이 매일 리포트에서 항상 빈 값으로 남는다(오늘도 동일). Locust
       시나리오에 자율 시뮬레이션 시작 + 저빈도 데모 승인 결정을 포함시켜 일상 리포트 자체에서
       비어 있지 않은 `by_agent`를 보고 싶다면, 이는 "운영자 명령 Load Test"라는 기존 워크로드의
       성격을 바꾸는 결정이라 별도 설계 검토(워크로드 분리 여부, CLAUDE.md 25번 "부하 유형을
       혼동하지 않는다" 원칙과의 관계)가 먼저 필요하다 — 바로 구현하지 않고 다음 후보로만 남긴다.
+- [ ] (2026-10-17 신규) `by_agent`에 오늘 추가한 `pending_total`/`pending_rate`는 PENDING만 센다
+      (EXPIRED는 `proposed_total`에는 들어가지만 `pending_total`/`approval_rate` 어디에도 포함되지
+      않음, 'D. 설계 결정' 참고). 그런데 지금 `by_agent`에는 에이전트별 `expired_total`이 전혀 없어서
+      "이 에이전트의 제안이 사람이 보기도 전에 만료되는 비율"은 아직 답할 수 없다 — 큐 전체 수준의
+      `expired_total`(app/approvals.py `summary()`)은 이미 있지만 에이전트별로는 쪼개져 있지 않다.
+      만료가 "사람이 늦게 봐서 생기는 적체"의 또 다른 형태라는 점에서 `pending_total`과 같은 결의
+      지표로 추가할 가치가 있는지 검토할 가치가 있다.
 
 ## 2026-10-14 Update — 전일 대비 이상 탐지를 고정 임계치에서 N일 통계 기반(z-score)으로 일반화
 
@@ -1173,6 +1180,48 @@
 - PAR 판단: 새 버그를 발견/해결한 것이 아니라 이미 알려진 격차(세 에이전트 중 하나가 캘리브레이션에서
   빠짐)를 계획대로 메운 작업이라 CLAUDE.md 42번 기준 PAR 대상은 아니라고 판단, ROADMAP과 Notion
   'A. 진행 현황'에만 기록했다.
+- 커밋: 이 날짜의 git 커밋 참고.
+
+## 2026-10-17 Update — 승인 큐 `by_agent`에 에이전트별 PENDING 적체(`pending_total`/`pending_rate`) 추가
+
+- 2026-10-16이 직접 관측 중에 남긴 다음 후보를 실행했다: `by_agent`의 `proposed_total`은 PENDING
+  상태 요청도 포함하는데, 그 사실 자체가 docstring에 명시돼 있지 않았고 "이 에이전트의 제안 중 몇
+  건이 아직 결정되지 않은 채 남아 있는가"(큐 적체)를 `approval_rate`와 분리해서 보여주는 필드가 없었다.
+- `app/approvals.py::by_agent()`에 `pending_total`(그 에이전트가 기여한 요청 중 현재 `PENDING`인
+  건수)과 `pending_rate`(`pending_total / proposed_total`)를 추가했다. docstring도 "`proposed_total`은
+  PENDING을 포함하므로 이 필드가 바로 '아직 결정되지 않은 비율'에 답한다"는 문장으로 갱신했다.
+- **대안 A (검토 후 기각): `pending_total`에 `EXPIRED`도 함께 포함** — "사람이 아직 손대지 않은 것"을
+  넓게 잡는다는 장점이 있지만, `EXPIRED`는 이미 자동으로 큐에서 빠져나간 건이라 "지금 사람이 봐야 할
+  대기 건수"라는 `pending_total`의 의도(현재 시점의 적체)와 맞지 않는다. 기존 `approval_rate`도
+  `decided = approved + rejected`만 분모로 쓰고 `EXPIRED`를 제외하는 동일한 철학을 따르고 있어, 두
+  지표의 "결정됨/안 됨" 기준을 다르게 두면 오히려 혼란스럽다고 판단해 기각했다.
+- **대안 B (선택): `pending_total`은 `ApprovalStatus.PENDING`만 카운트, `EXPIRED`는 어느 쪽에도
+  넣지 않음** — `proposed_total`에는 여전히 포함되지만 `pending_total`/`approval_rate`에서는
+  둘 다 제외되어, "현재 대기 중"과 "이미 결정됨(승인/반려)"을 명확히 분리한다. `EXPIRED` 건을 에이전트
+  단위로 따로 보고 싶은 경우(예: "이 에이전트 제안이 사람이 보기도 전에 만료되는 비율")는 오늘 바로
+  구현하지 않고 새 "다음 후보"로 남겼다(아래 참고) — `pending_total`과 성격이 다른 별도 지표라
+  범위를 넓히지 않았다.
+- 대시보드 "승인 큐" → "에이전트별 제안 신뢰도" 표에 "대기중"·"대기율" 두 컬럼을 추가하고, 표 상단
+  설명에 승인율은 결정된 요청만 기준으로 하고 대기중/대기율은 PENDING만 별도로 본다는 문장을 추가했다
+  (백엔드 `by_agent()`가 이미 계산한 값을 그대로 노출 — 새 API 없음).
+- 검증: 신규 pytest 1개 + 기존 3개 보강(전체 246→247)으로 (1) 결정된 건과 PENDING 건이 섞인 에이전트의
+  `pending_total`/`pending_rate` 계산, (2) 전부 PENDING인 에이전트는 `pending_rate=1.0`이면서
+  `approval_rate=None`(결정 건수 0이라 `0`이 아니라 `None`을 유지 — 값을 지어내지 않음), (3) 병합
+  제안이 기여한 양쪽 에이전트 모두 `pending_total=0`으로 일관되게 나오는 것을 확인했다. 전체 pytest
+  247개 통과. `scripts/run_daily_test.sh` 전체 파이프라인 재실행(요청 16,187건, 실패율 0.00%,
+  RPS 90.26, p95 59ms/p99 140ms, Server 5xx/IntegrityError 0, 예상 409 충돌 41건)도 정상 동작을
+  재확인했다 — 이 50 VU 시나리오는 자율 시뮬레이션을 켜지 않으므로(2026-10-16과 같은 기존 한계)
+  오늘 생성된 `reports/2026-10-17.json`의 `by_agent`는 여전히 빈 값이며, 새 필드 자체의 정확성은
+  pytest로 충분히 검증됐다고 판단했다.
+- 전일(2026-10-16) 대비 지표 검토: `scripts/baseline.py`의 Day-over-Day 통계 검사 11개 지표 전부
+  "normal"(failure_rate z=-0.33, p95_ms z=-0.82, p99_ms z=-0.77, rps z=0.17, peak_lots_on_hold_count
+  z=0.42, peak_hold_wait_seconds z=0.18, avg_resolved_hold_seconds z=0.39, defect_rate z=-0.62,
+  yield_rate z=-0.12, wip_count z=0.51, completed_today z=-0.84). `quality_anomalies`도
+  INSPECT-03 WARNING(defect rate 21.82% vs peer 0.00%, n=55) 1건뿐으로, 2026-09-20부터 반복된
+  동일한 Fault Injection 기반 Baseline 패턴이라 새 이상으로 기록하지 않았다.
+- PAR 판단: 실제 장애나 다단계 원인 분석이 아니라 계획된 소규모 필드 추가(설계 결정 1건 포함)라
+  CLAUDE.md 42번 기준으로 PAR 대상은 아니라고 판단, ROADMAP·Notion 'A. 진행 현황'·'D. 설계 결정'에만
+  기록했다.
 - 커밋: 이 날짜의 git 커밋 참고.
 
 ## 에이전트 작업 원칙

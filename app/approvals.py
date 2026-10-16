@@ -272,20 +272,38 @@ def by_agent(db: Session) -> dict[str, dict]:
     other agent's evidence". So the per-agent `proposed_total` values can
     sum to more than the queue's total request count — that is intended,
     not a double-counting bug.
+
+    `proposed_total` includes requests still PENDING, so it also answers
+    "how many of this agent's proposals are still undecided" — not just
+    "how many were ever decided". `pending_total`/`pending_rate` break that
+    subset out explicitly (queue backlog per agent), separate from
+    `approval_rate`, which is computed over decided (APPROVED/REJECTED)
+    requests only and ignores PENDING and EXPIRED.
     """
     rows = db.query(ApprovalRequest.source_agent, ApprovalRequest.status).all()
     stats: dict[str, dict] = {}
     for source_agent, status in rows:
         for agent in (a.strip() for a in source_agent.split(",")):
             entry = stats.setdefault(
-                agent, {"proposed_total": 0, "approved_total": 0, "rejected_total": 0}
+                agent,
+                {
+                    "proposed_total": 0,
+                    "approved_total": 0,
+                    "rejected_total": 0,
+                    "pending_total": 0,
+                },
             )
             entry["proposed_total"] += 1
             if status == ApprovalStatus.APPROVED.value:
                 entry["approved_total"] += 1
             elif status == ApprovalStatus.REJECTED.value:
                 entry["rejected_total"] += 1
+            elif status == ApprovalStatus.PENDING.value:
+                entry["pending_total"] += 1
     for entry in stats.values():
         decided = entry["approved_total"] + entry["rejected_total"]
         entry["approval_rate"] = (entry["approved_total"] / decided) if decided else None
+        entry["pending_rate"] = (
+            entry["pending_total"] / entry["proposed_total"] if entry["proposed_total"] else None
+        )
     return stats

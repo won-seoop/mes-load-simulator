@@ -215,12 +215,30 @@ def test_summary_by_agent_counts_each_agent_separately(client):
     assert quality["approved_total"] == 1
     assert quality["rejected_total"] == 0
     assert quality["approval_rate"] == pytest.approx(1.0)
+    # c is still PENDING: counted in proposed_total but not approval_rate,
+    # and surfaced separately as queue backlog.
+    assert quality["pending_total"] == 1
+    assert quality["pending_rate"] == pytest.approx(0.5)
 
     equipment = s["by_agent"]["rule:equipment-downtime"]
     assert equipment["proposed_total"] == 1
     assert equipment["approved_total"] == 0
     assert equipment["rejected_total"] == 1
     assert equipment["approval_rate"] == pytest.approx(0.0)
+    assert equipment["pending_total"] == 0
+    assert equipment["pending_rate"] == pytest.approx(0.0)
+
+
+def test_summary_by_agent_pending_rate_is_one_when_nothing_decided_yet(client):
+    client.post("/approvals", json=_payload(dedupe_key="only-pending", source_agent="rule:production-hold"))
+
+    s = client.get("/approvals/summary").json()
+    production = s["by_agent"]["rule:production-hold"]
+    assert production["proposed_total"] == 1
+    assert production["pending_total"] == 1
+    assert production["pending_rate"] == pytest.approx(1.0)
+    # No decided requests yet, so approval_rate stays None rather than 0.
+    assert production["approval_rate"] is None
 
 
 def test_summary_by_agent_attributes_merged_proposal_to_each_contributor(client):
@@ -237,6 +255,8 @@ def test_summary_by_agent_attributes_merged_proposal_to_each_contributor(client)
         assert s["by_agent"][agent]["proposed_total"] == 1
         assert s["by_agent"][agent]["approved_total"] == 1
         assert s["by_agent"][agent]["approval_rate"] == pytest.approx(1.0)
+        assert s["by_agent"][agent]["pending_total"] == 0
+        assert s["by_agent"][agent]["pending_rate"] == pytest.approx(0.0)
 
 
 def test_summary_by_agent_empty_queue_is_empty_dict(client):
