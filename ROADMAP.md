@@ -759,6 +759,19 @@
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
+- [ ] (2026-10-18 신규) 오늘 `by_agent`에 추가한 `expired_total`/`expired_rate`도 일상 50 VU
+      파이프라인에서는 여전히 빈 값이다 — `scripts/demo_calibrate_approval_metrics.py`를 확인해보니
+      req A-E(2026-10-04/16)는 전부 사람이 승인/반려하는 결정된 샘플만 만들고, TTL을 짧게 주거나
+      `expires_at`을 직접 과거로 돌려 실제로 만료되는 req는 아직 없다. `pending_total`/`pending_rate`가
+      2026-10-04/16과 같은 유형의 실측 보정을 아직 받지 않은 것처럼, `expired_total`/`expired_rate`를
+      실제로 0이 아닌 값으로 채우는 req F(짧은 TTL로 등록 후 아무도 결정하지 않고 방치)를 캘리브레이션
+      스크립트에 추가할 가치가 있는지 검토한다.
+- [ ] (2026-10-18 신규) INSPECT-03 불량률이 오늘 34.48%로 26일 기록 중 역대 최고치를 기록했다(기존
+      최고는 2026-09-23의 33.33%). CRITICAL 자체는 26일 중 5번째로 드물지 않지만, 상한이 계속
+      조금씩 올라가는 추세인지 아니면 단순히 표본 수가 늘어난 우연인지 판단할 근거가 아직 없다 —
+      `fault_inject_step_down`/`fault_inject_down`의 결정론적 확률이 바뀐 적이 없다는 것을 git log로
+      재확인하고, 26일치 INSPECT-03 불량률을 히스토그램으로 뽑아 실제 분포 모양(정규분포인지, 꼬리가
+      두꺼운지)을 눈으로 확인할 가치가 있다.
 - [x] (2026-10-11 완료) ~~2026-10-10에 컨트롤타워 판단 탭에 추가한 `app.a2a.latest_task_ids`를
       설비 드릴다운 드로어와 "이상 이력" 화면에도 연결~~ → 설비 드로어는 기존 `GET
       /a2a/tasks?equipment_id=` 필터(이력 전체를 이미 반환)를 그대로 재사용했고, "이상 이력"은
@@ -1063,13 +1076,13 @@
       비어 있지 않은 `by_agent`를 보고 싶다면, 이는 "운영자 명령 Load Test"라는 기존 워크로드의
       성격을 바꾸는 결정이라 별도 설계 검토(워크로드 분리 여부, CLAUDE.md 25번 "부하 유형을
       혼동하지 않는다" 원칙과의 관계)가 먼저 필요하다 — 바로 구현하지 않고 다음 후보로만 남긴다.
-- [ ] (2026-10-17 신규) `by_agent`에 오늘 추가한 `pending_total`/`pending_rate`는 PENDING만 센다
+- [x] (2026-10-18 완료) ~~`by_agent`에 오늘 추가한 `pending_total`/`pending_rate`는 PENDING만 센다
       (EXPIRED는 `proposed_total`에는 들어가지만 `pending_total`/`approval_rate` 어디에도 포함되지
       않음, 'D. 설계 결정' 참고). 그런데 지금 `by_agent`에는 에이전트별 `expired_total`이 전혀 없어서
       "이 에이전트의 제안이 사람이 보기도 전에 만료되는 비율"은 아직 답할 수 없다 — 큐 전체 수준의
       `expired_total`(app/approvals.py `summary()`)은 이미 있지만 에이전트별로는 쪼개져 있지 않다.
       만료가 "사람이 늦게 봐서 생기는 적체"의 또 다른 형태라는 점에서 `pending_total`과 같은 결의
-      지표로 추가할 가치가 있는지 검토할 가치가 있다.
+      지표로 추가할 가치가 있는지 검토할 가치가 있다.~~ → 아래 완료 섹션(2026-10-18 Update) 참고.
 
 ## 2026-10-14 Update — 전일 대비 이상 탐지를 고정 임계치에서 N일 통계 기반(z-score)으로 일반화
 
@@ -1222,6 +1235,44 @@
 - PAR 판단: 실제 장애나 다단계 원인 분석이 아니라 계획된 소규모 필드 추가(설계 결정 1건 포함)라
   CLAUDE.md 42번 기준으로 PAR 대상은 아니라고 판단, ROADMAP·Notion 'A. 진행 현황'·'D. 설계 결정'에만
   기록했다.
+- 커밋: 이 날짜의 git 커밋 참고.
+
+## 2026-10-18 Update — 승인 큐 `by_agent`에 에이전트별 만료 적체(`expired_total`/`expired_rate`) 추가
+
+- 2026-10-17이 직접 남긴 다음 후보를 실행했다: `by_agent`에 에이전트별 `pending_total`(대기중)은
+  있지만 `expired_total`(사람이 보기도 전에 시간이 지나 자동으로 포기된 건수)이 없어서, "이 에이전트의
+  제안이 사람이 보기도 전에 만료되는 비율"은 큐 전체 수준(`summary()`의 `expired_total`)으로만 답할 수
+  있었고 에이전트별로는 쪼개져 있지 않았다.
+- `app/approvals.py::by_agent()`에 `expired_total`(그 에이전트가 기여한 요청 중 `ApprovalStatus.EXPIRED`
+  건수)과 `expired_rate`(`expired_total / proposed_total`)를 `pending_total`/`pending_rate`와 같은
+  패턴으로 추가했다. docstring에도 "EXPIRED는 사람이 결정한 것이 아니라 시스템이 포기한 것이므로
+  `approval_rate` 분모에서 제외된다"는 기존 설계 원칙을 `expired_total`에도 동일하게 적용한다고 명시했다.
+  대시보드 "에이전트별 제안 신뢰도" 표에 "만료"·"만료율" 두 컬럼을 추가했다(백엔드가 이미 계산한 값을
+  그대로 노출 — 새 API 없음).
+- 새 대안을 비교할 필요는 없었다 — 2026-10-17에 이미 "EXPIRED는 `pending_total`과 분리해서 별도로
+  센다"는 설계 결정이 끝나 있었고, 오늘은 그 결정을 `expired_total`이라는 실제 필드로 구현한 것뿐이다.
+  (`D. 설계 결정`에 새 A/B 비교를 추가하지 않은 이유이기도 하다.)
+- 검증: 신규 pytest 1개 + 기존 3개 보강(기존 테스트에 단언만 추가한 3건은 테스트 개수를 늘리지 않음,
+  전체 247→248)으로 (1) 결정+PENDING이 섞인 에이전트의 `expired_total=0`
+  (아직 아무것도 만료 안 됨), (2) 같은 에이전트의 요청 중 하나만 실제로 만료시켜 `expired_total=1`,
+  `expired_rate=0.5`, 그리고 APPROVED/REJECTED가 전혀 없어 `approval_rate`가 `None`으로 유지되는 것을
+  (EXPIRED가 승인도 반려도 아니므로 "결정되지 않음"으로 남아야 함) 확인했다. 전체 pytest 248개 통과.
+  `scripts/run_daily_test.sh` 전체 파이프라인 재실행(요청 15,911건, 실패율 0.00%, RPS 88.69, p95
+  72ms/p99 190ms, Server 5xx/IntegrityError 0, 예상 409 충돌 39건) — 이 50 VU 시나리오는 자율 시뮬레이션을
+  켜지 않으므로(2026-10-16/17과 같은 기존 한계) 오늘 생성된 `reports/2026-10-18.json`의 `by_agent`는
+  여전히 빈 값이며, 새 필드 자체의 정확성은 pytest로 충분히 검증됐다고 판단했다.
+- 전일(2026-10-17) 대비 지표 검토: `scripts/baseline.py`의 Day-over-Day 통계 검사 11개 지표 전부
+  "normal"(failure_rate z=-0.33, p95_ms z=-0.66, p99_ms z=-0.54, rps z=-0.14, peak_lots_on_hold_count
+  z=-1.31, peak_hold_wait_seconds z=-0.73, avg_resolved_hold_seconds z=-1.35, defect_rate z=2.31,
+  yield_rate z=0.62, wip_count z=0.56, completed_today z=-0.83). `quality_anomalies`는 INSPECT-03
+  CRITICAL(불량률 34.48% vs 피어 0%, n=58) 1건 — 과거 26일 기록을 모두 대조해보니(09-23: 33.33%,
+  09-27: 30.19%, 10-06: 32.88%, 10-10: 31.48%) 오늘 값이 역대 최고치이지만 CRITICAL 자체가
+  26일 중 5번째로, 2026-09-20부터 반복 문서화된 동일한 결정론적 Fault Injection 표본 변동(약 20~33%) 범위
+  바로 위에 있는 수준이라 코드 회귀로 보지 않았다 — 새 이상으로 기록하지 않았다. 다만 역대 최고치라는
+  점은 ROADMAP "다음 후보"에 "이 분포의 실제 상한이 어디인지"를 계속 관찰할 가치로 남긴다.
+- PAR 판단: 실제 장애나 다단계 원인 분석이 아니라 2026-10-17에 이미 결정된 설계를 그대로 구현한
+  소규모 필드 추가라 CLAUDE.md 42번 기준으로 PAR 대상은 아니라고 판단, ROADMAP·Notion 'A. 진행
+  현황'에만 기록했다.
 - 커밋: 이 날짜의 git 커밋 참고.
 
 ## 에이전트 작업 원칙

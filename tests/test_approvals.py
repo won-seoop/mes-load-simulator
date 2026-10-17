@@ -219,6 +219,8 @@ def test_summary_by_agent_counts_each_agent_separately(client):
     # and surfaced separately as queue backlog.
     assert quality["pending_total"] == 1
     assert quality["pending_rate"] == pytest.approx(0.5)
+    assert quality["expired_total"] == 0
+    assert quality["expired_rate"] == pytest.approx(0.0)
 
     equipment = s["by_agent"]["rule:equipment-downtime"]
     assert equipment["proposed_total"] == 1
@@ -227,6 +229,8 @@ def test_summary_by_agent_counts_each_agent_separately(client):
     assert equipment["approval_rate"] == pytest.approx(0.0)
     assert equipment["pending_total"] == 0
     assert equipment["pending_rate"] == pytest.approx(0.0)
+    assert equipment["expired_total"] == 0
+    assert equipment["expired_rate"] == pytest.approx(0.0)
 
 
 def test_summary_by_agent_pending_rate_is_one_when_nothing_decided_yet(client):
@@ -239,6 +243,8 @@ def test_summary_by_agent_pending_rate_is_one_when_nothing_decided_yet(client):
     assert production["pending_rate"] == pytest.approx(1.0)
     # No decided requests yet, so approval_rate stays None rather than 0.
     assert production["approval_rate"] is None
+    assert production["expired_total"] == 0
+    assert production["expired_rate"] == pytest.approx(0.0)
 
 
 def test_summary_by_agent_attributes_merged_proposal_to_each_contributor(client):
@@ -257,11 +263,42 @@ def test_summary_by_agent_attributes_merged_proposal_to_each_contributor(client)
         assert s["by_agent"][agent]["approval_rate"] == pytest.approx(1.0)
         assert s["by_agent"][agent]["pending_total"] == 0
         assert s["by_agent"][agent]["pending_rate"] == pytest.approx(0.0)
+        assert s["by_agent"][agent]["expired_total"] == 0
+        assert s["by_agent"][agent]["expired_rate"] == pytest.approx(0.0)
 
 
 def test_summary_by_agent_empty_queue_is_empty_dict(client):
     s = client.get("/approvals/summary").json()
     assert s["by_agent"] == {}
+
+
+def test_summary_by_agent_counts_expired_separately_from_pending(client):
+    # One request from this agent expires before anyone decides it; a second
+    # from the same agent stays PENDING. expired_total/expired_rate should
+    # reflect only the former, and approval_rate should stay None (no
+    # APPROVED/REJECTED rows at all -- EXPIRED doesn't count as a decision).
+    expired = client.post(
+        "/approvals",
+        json=_payload(dedupe_key="expired", source_agent="rule:quality-anomaly", ttl_seconds=1),
+    ).json()
+    client.post(
+        "/approvals", json=_payload(dedupe_key="still-pending", source_agent="rule:quality-anomaly")
+    )
+    db = SessionLocal()
+    try:
+        row = db.get(ApprovalRequest, expired["id"])
+        row.expires_at = datetime.utcnow() - timedelta(seconds=5)
+        db.commit()
+    finally:
+        db.close()
+
+    s = client.get("/approvals/summary").json()
+    quality = s["by_agent"]["rule:quality-anomaly"]
+    assert quality["proposed_total"] == 2
+    assert quality["pending_total"] == 1
+    assert quality["expired_total"] == 1
+    assert quality["expired_rate"] == pytest.approx(0.5)
+    assert quality["approval_rate"] is None
 
 
 def test_quality_anomaly_creates_one_request_that_counts_up_not_duplicates(client, monkeypatch):

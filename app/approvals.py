@@ -279,6 +279,13 @@ def by_agent(db: Session) -> dict[str, dict]:
     subset out explicitly (queue backlog per agent), separate from
     `approval_rate`, which is computed over decided (APPROVED/REJECTED)
     requests only and ignores PENDING and EXPIRED.
+
+    `expired_total`/`expired_rate` count requests that timed out
+    (`ApprovalStatus.EXPIRED`) before a person decided them — a backlog that
+    already left the queue, as opposed to `pending_total` (still waiting
+    right now). Like `pending_total`, EXPIRED is excluded from
+    `approval_rate`'s denominator (a timeout is the system giving up, not a
+    person agreeing or disagreeing).
     """
     rows = db.query(ApprovalRequest.source_agent, ApprovalRequest.status).all()
     stats: dict[str, dict] = {}
@@ -291,6 +298,7 @@ def by_agent(db: Session) -> dict[str, dict]:
                     "approved_total": 0,
                     "rejected_total": 0,
                     "pending_total": 0,
+                    "expired_total": 0,
                 },
             )
             entry["proposed_total"] += 1
@@ -300,10 +308,15 @@ def by_agent(db: Session) -> dict[str, dict]:
                 entry["rejected_total"] += 1
             elif status == ApprovalStatus.PENDING.value:
                 entry["pending_total"] += 1
+            elif status == ApprovalStatus.EXPIRED.value:
+                entry["expired_total"] += 1
     for entry in stats.values():
         decided = entry["approved_total"] + entry["rejected_total"]
         entry["approval_rate"] = (entry["approved_total"] / decided) if decided else None
         entry["pending_rate"] = (
             entry["pending_total"] / entry["proposed_total"] if entry["proposed_total"] else None
+        )
+        entry["expired_rate"] = (
+            entry["expired_total"] / entry["proposed_total"] if entry["proposed_total"] else None
         )
     return stats
