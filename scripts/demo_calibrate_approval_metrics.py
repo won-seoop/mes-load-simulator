@@ -23,6 +23,24 @@ ETCH downtime that PAR-016 (2026-09-30) first observed firing
 `rule:production-hold` in real time, then decides it, so all three agents
 have at least one decided sample.
 
+Until 2026-10-18 this script also never produced a single EXPIRED sample,
+so `expired_total`/`expired_rate` (added 2026-10-17/18, app/approvals.py
+`summary()`/`by_agent()`) stayed at 0 on every daily report even though the
+field existed and was unit-tested (tests/test_approvals.py). Req F below
+closes that gap: every real trigger this script uses (toggling equipment,
+injecting a defect bias, holding a step) goes through
+app/control_tower.py, which hardcodes `APPROVAL_TTL_SECONDS = 900` -- far
+longer than this script's own poll window -- so there is no way to observe
+a *real* expiry end-to-end without either waiting 15 minutes or posting
+directly to the public `POST /approvals` API with a short `ttl_seconds`.
+The latter is exactly the technique tests/test_approvals.py already uses
+at the unit level (`test_summary_by_agent_counts_expired_separately_from_pending`
+uses `ttl_seconds=1` via the same endpoint); req F does the same thing
+against a live server instead of the test client, attributed to a real
+agent name (`rule:equipment-downtime`) on an equipment_id no other req
+touches, and deliberately never decided, so `expire_stale()` (triggered by
+the next `GET /approvals*` call) flips it PENDING -> EXPIRED for real.
+
 What this is NOT
 -----------------
 This does not make the system execute anything automatically. Deciding an
@@ -32,7 +50,10 @@ The "decider" here is this script, not a real operator, so every decision is
 recorded with decided_by="demo-calibration" (never a name that could be
 mistaken for a real reviewer) and this file documents exactly when/why each
 decision fires. This is a synthetic timing exercise to sanity-check a metric
-definition, not a claim about real human approval behavior.
+definition, not a claim about real human approval behavior. Req F's request
+is also not a real agent detection -- it is posted directly to the public
+API with a short TTL to observe a real expiry quickly, not left pending by
+an actual rule agent that happened to time out.
 
 Usage
 -----
@@ -156,6 +177,39 @@ def trigger_and_decide_production_hold(base, eq, log, step="ETCH", hold_seconds=
     )
 
 
+def trigger_and_expire_equipment_downtime(base, eq, log, ttl_seconds=6.0):
+    """req F: post directly to POST /approvals with a short ttl_seconds,
+    then never decide it, so expire_stale() flips it PENDING -> EXPIRED for
+    real the next time any GET /approvals* call runs (see module docstring
+    for why a real agent trigger cannot produce a short expiry).
+
+    Uses CMP-01, an equipment_id no other req in this script touches, so
+    this request's dedupe_key cannot fold into or be confused with req B's
+    CMP-02 downtime proposal.
+    """
+    target = eq["CMP-01"]
+    body = {
+        "source_agent": "rule:equipment-downtime",
+        "title": f"{target['name']} 저위험 점검 제안 (보정용, {ttl_seconds:.0f}s TTL로 방치)",
+        "proposal": f"{target['name']} 점검 일정 확인",
+        "evidence": "demo_calibrate_approval_metrics.py req F: 짧은 TTL로 직접 등록 후 "
+                    "의도적으로 결정하지 않아 expired_total/expired_rate 보정용 실제 만료를 관찰함",
+        "risk_level": "LOW",
+        "equipment_id": target["id"],
+        "dedupe_key": "calibration-req-f-expired",
+        "ttl_seconds": int(ttl_seconds),
+    }
+    row = call(base, "POST", "/approvals", body)
+    log(f"req F ({target['name']} calibration request, id={row['id']}) posted with "
+        f"ttl_seconds={ttl_seconds:.0f} -> left undecided on purpose")
+    time.sleep(ttl_seconds + 4.0)
+    rows = call(base, "GET", "/approvals")
+    row_after = next((r for r in rows if r["id"] == row["id"]), None)
+    status = row_after["status"] if row_after else "unknown (not found)"
+    log(f"req F (id={row['id']}) status after TTL elapsed: {status}")
+    return row_after
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://127.0.0.1:18300")
@@ -176,6 +230,7 @@ def main():
     eq = equipment_by_name(base)
 
     result_e = trigger_and_decide_production_hold(base, eq, log)
+    result_f = trigger_and_expire_equipment_downtime(base, eq, log)
 
     # Two distinct single-equipment downtime proposals (different equipment_id
     # => different dedupe_key => the control tower will not merge them).
@@ -262,6 +317,8 @@ def main():
 
     if result_e:
         results["E"] = result_e
+    if result_f:
+        results["F"] = result_f
 
     summary = call(base, "GET", "/approvals/summary")
     log("decisions recorded: " + ", ".join(f"{k}={v['status']}" for k, v in results.items()))

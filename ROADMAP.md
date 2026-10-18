@@ -759,19 +759,23 @@
 
 ## 다음 후보 (우선순위 순서는 참고용, 상황 따라 조정 가능)
 
-- [ ] (2026-10-18 신규) 오늘 `by_agent`에 추가한 `expired_total`/`expired_rate`도 일상 50 VU
-      파이프라인에서는 여전히 빈 값이다 — `scripts/demo_calibrate_approval_metrics.py`를 확인해보니
-      req A-E(2026-10-04/16)는 전부 사람이 승인/반려하는 결정된 샘플만 만들고, TTL을 짧게 주거나
-      `expires_at`을 직접 과거로 돌려 실제로 만료되는 req는 아직 없다. `pending_total`/`pending_rate`가
-      2026-10-04/16과 같은 유형의 실측 보정을 아직 받지 않은 것처럼, `expired_total`/`expired_rate`를
-      실제로 0이 아닌 값으로 채우는 req F(짧은 TTL로 등록 후 아무도 결정하지 않고 방치)를 캘리브레이션
-      스크립트에 추가할 가치가 있는지 검토한다.
+- [x] (2026-10-19 완료) ~~오늘 `by_agent`에 추가한 `expired_total`/`expired_rate`도 일상 50 VU
+      파이프라인에서는 여전히 빈 값이다 — req F(짧은 TTL로 등록 후 아무도 결정하지 않고 방치)를
+      캘리브레이션 스크립트에 추가할 가치가 있는지 검토한다.~~ → 아래 완료 섹션(2026-10-19 Update)
+      참고. `pending_total`/`pending_rate`는 여전히 미보정 상태로 남아있다(아래 신규 후보 참고).
 - [ ] (2026-10-18 신규) INSPECT-03 불량률이 오늘 34.48%로 26일 기록 중 역대 최고치를 기록했다(기존
       최고는 2026-09-23의 33.33%). CRITICAL 자체는 26일 중 5번째로 드물지 않지만, 상한이 계속
       조금씩 올라가는 추세인지 아니면 단순히 표본 수가 늘어난 우연인지 판단할 근거가 아직 없다 —
       `fault_inject_step_down`/`fault_inject_down`의 결정론적 확률이 바뀐 적이 없다는 것을 git log로
       재확인하고, 26일치 INSPECT-03 불량률을 히스토그램으로 뽑아 실제 분포 모양(정규분포인지, 꼬리가
       두꺼운지)을 눈으로 확인할 가치가 있다.
+- [ ] (2026-10-19 신규) `pending_total`/`pending_rate`(2026-10-17 추가)는 `expired_total`과 같은
+      이유로 여전히 캘리브레이션 스크립트에서 실측 보정을 받지 못했다 — req F는 짧은 TTL로 등록 후
+      "아무도 결정하지 않음"을 그대로 둬서 만료시켰지만, "아직 만료되지 않은 채로 PENDING에 남아있는"
+      표본은 스크립트 실행 도중 캡처한 시점이 아니라 스크립트가 끝난 뒤 수동으로 `GET /approvals`를
+      다시 확인해야 보인다. req F처럼 짧지만 스크립트 종료 시점까지는 만료되지 않을 TTL(예: 전체
+      실행시간보다 긴 하지만 900s보다는 훨씬 짧은 값)로 req G를 추가해 `pending_total`도 실측값으로
+      채울 가치가 있는지 검토한다.
 - [x] (2026-10-11 완료) ~~2026-10-10에 컨트롤타워 판단 탭에 추가한 `app.a2a.latest_task_ids`를
       설비 드릴다운 드로어와 "이상 이력" 화면에도 연결~~ → 설비 드로어는 기존 `GET
       /a2a/tasks?equipment_id=` 필터(이력 전체를 이미 반환)를 그대로 재사용했고, "이상 이력"은
@@ -1273,6 +1277,51 @@
 - PAR 판단: 실제 장애나 다단계 원인 분석이 아니라 2026-10-17에 이미 결정된 설계를 그대로 구현한
   소규모 필드 추가라 CLAUDE.md 42번 기준으로 PAR 대상은 아니라고 판단, ROADMAP·Notion 'A. 진행
   현황'에만 기록했다.
+- 커밋: 이 날짜의 git 커밋 참고.
+
+## 2026-10-19 Update — 승인 큐 캘리브레이션 스크립트에 req F(짧은 TTL 직접 등록 → 미결정 방치)를 추가해 `expired_total`/`expired_rate`를 실측값으로 채움
+
+- 2026-10-18이 직접 남긴 다음 후보를 실행했다: `expired_total`/`expired_rate` 필드(2026-10-17/18 추가)는
+  구현과 pytest 단위 테스트는 끝났지만, 일상 50 VU 파이프라인과 `scripts/demo_calibrate_approval_metrics.py`
+  양쪽 모두 자율 시뮬레이션 기반 실측 캘리브레이션에서는 여전히 0/빈 값이었다 — "이 필드가 실제로 0이
+  아닌 값을 만들어내는 흐름이 한 번도 실행된 적이 없다"는 의미의 gap이었다.
+- 원인: 이 스크립트의 req A-E는 모두 `app/control_tower.py`를 거쳐 실제 엔진 트리거(설비 토글,
+  불량률 주입, 스텝 전체 다운)로 승인 요청을 만드는데, `control_tower.APPROVAL_TTL_SECONDS`가
+  900초로 고정돼 있어 이 경로로는 15분을 기다리지 않는 한 실제 만료를 관찰할 방법이 없었다. 반면
+  `tests/test_approvals.py::test_summary_by_agent_counts_expired_separately_from_pending`는 이미
+  `POST /approvals`에 `ttl_seconds=1`을 직접 줘서 단위 테스트 수준에서는 같은 문제를 풀어뒀던 상태였다.
+- A안(대안): req E처럼 실제 엔진 트리거를 쓰고 900초를 그대로 기다린다 — 안 고른 이유: 이 스크립트의
+  나머지 전체(req A-E)가 약 165초 안에 끝나는데 이 한 단계만 15분으로 늘리면 "3-4분짜리 보정 실행"이라는
+  스크립트 자체의 설계 목적(docstring 명시)과 맞지 않고, 매번 계산 비용이 커진다. 공개 자료에도 이
+  900초 TTL이 제조현장 특정 SLA를 반영한다는 근거가 없는 데모 값이라, 실제 트리거로 900초를 기다려도
+  "더 현실적인" 샘플이 되는 것은 아니다.
+- B안(선택): `tests/test_approvals.py`가 단위 테스트에서 이미 쓰던 기법 그대로, `POST /approvals`에
+  짧은 `ttl_seconds`(6초)를 직접 줘서 실제 서버의 `rule:equipment-downtime`로 등록하고(CMP-02 downtime을
+  다루는 req B와 겹치지 않도록 CMP-01, dedupe_key도 별도), 끝까지 결정하지 않고 그대로 둔다. 다음
+  `GET /approvals`/`GET /approvals/summary` 호출이 `approvals_service.expire_stale()`을 트리거해서
+  PENDING -> EXPIRED로 실제로 바뀌는 것을 관찰한다. 선택 이유: 코드베이스가 이미 이 기법을 검증된
+  방식으로 쓰고 있었고(일관성), 15분을 기다리지 않고도 몇 초 안에 실제 엔드투엔드 만료를 재현할 수
+  있다. req F의 요청은 실제 에이전트 탐지가 아니라는 점을 docstring과 evidence 문자열에 명시해 혼동을
+  막았다(합성 표본임을 숨기지 않음).
+- 검증: `scripts/demo_calibrate_approval_metrics.py`에 `trigger_and_expire_equipment_downtime()`(req F)을
+  추가하고, 격리 서버(포트 18300, 별도 sqlite 파일)에서 단독으로 실행해 (1) `POST /approvals`
+  (ttl_seconds=6) 응답이 `PENDING`, (2) 10초 후 `GET /approvals`에서 같은 id가 `EXPIRED`로 바뀜,
+  (3) `GET /approvals/summary`의 `expired_total=1`, `by_agent["rule:equipment-downtime"].expired_total=1`/
+  `expired_rate=1.0`을 모두 실제 HTTP 응답으로 확인했다. pytest는 이 변경으로 늘지 않음(데모 스크립트라
+  단위 테스트 대상이 아님, 기존 248개 그대로 통과). `scripts/run_daily_test.sh` 전체 파이프라인도
+  재실행(요청 15,892건, 실패율 0.00%, RPS 88.58, p95 110ms/p99 240ms, Server 5xx/IntegrityError 0,
+  예상 409 충돌 73건) — 이 50 VU 시나리오는 자율 시뮬레이션을 켜지 않으므로(기존 한계, 2026-10-16/17/18과
+  동일) 오늘 생성된 `reports/2026-10-19.json`의 `by_agent`는 여전히 빈 값이고, req F의 실측 확인은 위의
+  별도 격리 실행으로 충분하다고 판단했다.
+- 전일(2026-10-18) 대비 지표 검토: `scripts/baseline.py`의 Day-over-Day 통계 검사 11개 지표 전부
+  "normal"(failure_rate z=-0.33, p95_ms z=-0.22, p99_ms z=-0.33, rps z=-0.16, peak_lots_on_hold_count
+  z=-0.33, peak_hold_wait_seconds z=-0.89, avg_resolved_hold_seconds z=-0.64, defect_rate z=0.12,
+  yield_rate z=0.6, wip_count z=-0.25, completed_today z=0.12). `quality_anomalies`는 INSPECT-03
+  WARNING(불량률 26.47% vs 피어 0%, n=68) 1건 — 2026-09-20부터 반복 문서화된 동일한 결정론적 Fault
+  Injection 표본 변동(약 20~34%) 범위 안이라 새 이상으로 기록하지 않았다.
+- PAR 판단: 실제 장애나 다단계 원인 분석이 아니라 2026-10-18이 이미 남긴 계획된 다음 후보(짧은 TTL
+  직접 등록)를 그대로 실행한 소규모 스크립트 추가라 CLAUDE.md 42번 기준으로 PAR 대상은 아니라고
+  판단, ROADMAP·Notion 'A. 진행 현황'·'D. 설계 결정'에만 기록했다.
 - 커밋: 이 날짜의 git 커밋 참고.
 
 ## 에이전트 작업 원칙
